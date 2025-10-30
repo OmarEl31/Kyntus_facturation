@@ -1,0 +1,57 @@
+version: "3.9"
+
+services:
+  kyntus_db:
+    image: postgres:15
+    container_name: kyntus_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - kyntus_data:/var/lib/postgresql/data
+    networks:
+      - kyntus_net
+
+  kyntus_pgadmin:
+    image: dpage/pgadmin4
+    container_name: kyntus_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@kyntus.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "5050:80"
+    depends_on:
+      - kyntus_db
+    networks:
+      - kyntus_net
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+  kyntus_api:
+    build: .
+    container_name: kyntus_api
+    env_file: .env
+    depends_on:
+      - kyntus_db
+    ports:
+      - "8000:8000"
+    networks:
+      - kyntus_net
+
+  kyntus_front:
+    build: ./frontend
+    container_name: kyntus_front
+    ports:
+      - "3000:80"
+    networks:
+      - kyntus_net
+
+volumes:
+  kyntus_data:
+  pgadmin_data:
+networks:
+  kyntus_net:
+    driver: bridge

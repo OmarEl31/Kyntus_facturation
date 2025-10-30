@@ -1,0 +1,14 @@
+ï»¿source;activite;type_cloture;code_cloture;libelle;code_situation;remu_oui_non;article_code;commentaire;priorite;actif
+E;PROD;Intervention terminÃÂ©e;DMS;Dossier mis en service;;OUI;LSA;ValidÃÂ© = facturable (prod);10;True
+E;PROD;Intervention terminÃÂ©e;DEF;DÃÂ©finitif;;OUI;LSA;ValidÃÂ© = facturable (prod);10;True
+E;PROD;Intervention terminÃÂ©e;PDC;Prise de charge;;OUI;LSA;ValidÃÂ© = facturable (prod);10;True
+E;PROD;Intervention terminÃÂ©e;TOK;TerminÃÂ©e OK;;OUI;LSA;ValidÃÂ© = facturable (prod);10;True
+D3;SAV;Intervention terminÃÂ©e;DMS;Dossier mis en service SAV;;OUI;LSA;ValidÃÂ© = facturable (sav);15;True
+D3;SAV;Intervention terminÃÂ©e;DEF;DÃÂ©finitif SAV;;OUI;LSA;ValidÃÂ© = facturable (sav);15;True
+D3;SAV;Intervention terminÃÂ©e;PDC;Prise de charge SAV;;OUI;LSA;ValidÃÂ© = facturable (sav);15;True
+D3;SAV;Intervention terminÃÂ©e;TOK;TerminÃÂ©e OK SAV;;OUI;LSA;ValidÃÂ© = facturable (sav);15;True
+ALL;ALL;Ãâ°chec client;ECH;Ãâ°chec cause client;Client absent;OUI;DEPLA;DÃÂ©placement facturable en cas d'ÃÂ©chec client;30;True
+ALL;ALL;Annulation;ANN;Annulation tardive;Client indisponible;OUI;DEPLA;DÃÂ©placement facturable en cas d'annulation tardive;30;True
+ALL;ALL;Ãâ°chec technique;ECT;Ãâ°chec technique;RÃÂ©seau/Infra;NON;;Non facturable (prise en charge opÃÂ©rateur);40;True
+ALL;ALL;Annulation;ANN;Annulation opÃÂ©rateur;Annulation par donneur d'ordre;NON;;Non facturable;40;True
+ALL;ALL;Autres;AUT;Autres cas;;NON;;Par dÃÂ©faut non facturable;100;True

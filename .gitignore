@@ -1,0 +1,32 @@
+# .gitignore pour Python + React 
+# Python
+__pycache__/
+*.py[cod]
+*.env
+venv/
+.env
+.env.local
+*.sqlite3
+
+# FastAPI / build
+/dist/
+*.log
+
+# React / Node
+node_modules/
+build/
+dist/
+.npm/
+.yarn/
+coverage/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docker
+*.pid
+*.sock
+docker-compose.override.yml
