@@ -1,13 +1,14 @@
 version: "3.9"
 
 services:
-  kyntus_db:
+  # 🐘 Base de données PostgreSQL
+  db:
     image: postgres:15
-    container_name: kyntus_db
+    container_name: kyntus_db_main
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:-kyntus_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kyntus_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-kyntus_db}
     ports:
       - "5432:5432"
     volumes:
@@ -15,43 +16,63 @@ services:
     networks:
       - kyntus_net
 
-  kyntus_pgadmin:
+  # 🧭 Interface d’administration PostgreSQL (pgAdmin)
+  pgadmin:
     image: dpage/pgadmin4
-    container_name: kyntus_pgadmin
+    container_name: kyntus_pgadmin_
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@kyntus.com
       PGADMIN_DEFAULT_PASSWORD: admin123
     ports:
       - "5050:80"
     depends_on:
-      - kyntus_db
-    networks:
-      - kyntus_net
+      - db
     volumes:
       - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - kyntus_net
 
-  kyntus_api:
-    build: .
-    container_name: kyntus_api
-    env_file: .env
+  # ⚙️ Backend FastAPI (API principale)
+  backend:
+    build:
+      context: ./Backend               # Dossier correct avec majuscule
+      dockerfile: Dockerfile
+    container_name: kyntus_backend
+    env_file:
+      - ./Backend/.env                 # Variables d’environnement backend
     depends_on:
-      - kyntus_db
+      - db
     ports:
       - "8000:8000"
     networks:
       - kyntus_net
+    volumes:
+      - ./Backend:/app                 # Synchronisation du code backend
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-  kyntus_front:
-    build: ./frontend
-    container_name: kyntus_front
+  # 💻 Frontend Next.js / React
+  frontend:
+    build:
+      context: ./Frontend              # Dossier correct avec majuscule
+      dockerfile: Dockerfile
+    container_name: kyntus_frontend
+    depends_on:
+      - backend
     ports:
-      - "3000:80"
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://kyntus_backend:8000   # 🔗 Lien backend dans réseau Docker
     networks:
       - kyntus_net
+    volumes:
+      - ./Frontend:/app
+    command: npm run dev
 
+# 🔒 Réseaux & Volumes partagés
 volumes:
   kyntus_data:
   pgadmin_data:
+
 networks:
   kyntus_net:
     driver: bridge
