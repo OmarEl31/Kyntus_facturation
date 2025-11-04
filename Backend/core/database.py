@@ -1,36 +1,53 @@
-# backend/core/database.py
 import os
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
 
-# Charger les variables d'environnement depuis .env
+# ----------------------------------------------------------------------
+# 1️⃣ Chargement des variables d’environnement
+# ----------------------------------------------------------------------
 load_dotenv()
 
-# Lecture de la chaîne de connexion PostgreSQL
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-if not DATABASE_URL:
-    raise ValueError("❌ DATABASE_URL manquant dans le fichier .env")
-
-# Création du moteur SQLAlchemy
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,     # évite les connexions mortes
-    echo=False              # passe à True pour voir les requêtes SQL dans les logs
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql+asyncpg://kyntus_user:kyntus_pass@kyntus_db_main:5432/kyntus_db"
 )
 
-# Configuration de la session locale
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+if not DATABASE_URL:
+    raise ValueError("❌ DATABASE_URL manquant dans .env")
 
-# Base commune pour les modèles ORM
+# ----------------------------------------------------------------------
+# 2️⃣ Création du moteur SQLAlchemy asynchrone
+# ----------------------------------------------------------------------
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,          # Mets True si tu veux voir les requêtes SQL dans les logs
+    pool_pre_ping=True,  # Vérifie la validité des connexions
+)
+
+# ----------------------------------------------------------------------
+# 3️⃣ Session asynchrone (pour FastAPI)
+# ----------------------------------------------------------------------
+AsyncSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
+
+# ----------------------------------------------------------------------
+# 4️⃣ Base ORM commune
+# ----------------------------------------------------------------------
 Base = declarative_base()
 
-# Dépendance utilisée dans les routes FastAPI
-def get_db():
-    """Ouvre une session DB pour chaque requête API."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# ----------------------------------------------------------------------
+# 5️⃣ Dépendance FastAPI : session par requête
+# ----------------------------------------------------------------------
+# ❗ CORRECTION IMPORTANTE :
+# On ne décore PAS avec @asynccontextmanager, FastAPI gère déjà le cycle de vie async.
+async def get_async_session() -> AsyncSession:
+    """
+    Ouvre une session de base de données asynchrone pour chaque requête FastAPI.
+    Se ferme automatiquement après usage.
+    """
+    async with AsyncSessionLocal() as session:
+        yield session

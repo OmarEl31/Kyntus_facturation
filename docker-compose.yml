@@ -1,7 +1,6 @@
 version: "3.9"
 
 services:
-  # 🐘 Base de données PostgreSQL
   db:
     image: postgres:15
     container_name: kyntus_db_main
@@ -13,10 +12,8 @@ services:
       - "5432:5432"
     volumes:
       - kyntus_data:/var/lib/postgresql/data
-    networks:
-      - kyntus_net
+    networks: [kyntus_net]
 
-  # 🧭 Interface d’administration PostgreSQL (pgAdmin)
   pgadmin:
     image: dpage/pgadmin4
     container_name: kyntus_pgadmin_
@@ -25,50 +22,43 @@ services:
       PGADMIN_DEFAULT_PASSWORD: admin123
     ports:
       - "5050:80"
-    depends_on:
-      - db
+    depends_on: [db]
     volumes:
       - pgadmin_data:/var/lib/pgadmin
-    networks:
-      - kyntus_net
+    networks: [kyntus_net]
 
-  # ⚙️ Backend FastAPI (API principale)
   backend:
     build:
-      context: ./Backend               # Dossier correct avec majuscule
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Backend/Dockerfile
     container_name: kyntus_backend
     env_file:
-      - ./Backend/.env                 # Variables d’environnement backend
-    depends_on:
-      - db
+      - ./Backend/.env
+    environment:
+      PYTHONPATH: "/app:/app/Backend"
+    working_dir: /app/Backend
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./Backend:/app/Backend
+    depends_on: [db]
     ports:
       - "8000:8000"
-    networks:
-      - kyntus_net
-    volumes:
-      - ./Backend:/app                 # Synchronisation du code backend
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    networks: [kyntus_net]
 
-  # 💻 Frontend Next.js / React
   frontend:
     build:
-      context: ./Frontend              # Dossier correct avec majuscule
+      context: ./Frontend
       dockerfile: Dockerfile
     container_name: kyntus_frontend
-    depends_on:
-      - backend
-    ports:
-      - "3000:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://kyntus_backend:8000   # 🔗 Lien backend dans réseau Docker
-    networks:
-      - kyntus_net
+      NEXT_PUBLIC_API_URL: http://localhost:8000
     volumes:
       - ./Frontend:/app
-    command: npm run dev
+    depends_on: [backend]
+    ports:
+      - "3000:3000"
+    networks: [kyntus_net]
 
-# 🔒 Réseaux & Volumes partagés
 volumes:
   kyntus_data:
   pgadmin_data:
