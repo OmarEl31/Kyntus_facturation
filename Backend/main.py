@@ -2,6 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routes.dossiers import router as dossiers_router   # ✅ Chemin correct si "routes" est dans Backend/
+from routes.imports import router as import_router
 
 app = FastAPI(title="Kyntus Facturation API")
 
@@ -19,5 +20,7 @@ app.add_middleware(
 async def root():
     return {"status": "ok", "service": "Kyntus Facturation API"}
 
+app.include_router(import_router)
 # ✅ Inclusion des routes
 app.include_router(dossiers_router)
+
