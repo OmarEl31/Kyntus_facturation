@@ -1,3 +1,4 @@
+# Backend/core/database.py
 import os
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -21,8 +22,8 @@ if not DATABASE_URL:
 # ----------------------------------------------------------------------
 engine = create_async_engine(
     DATABASE_URL,
-    echo=False,          # Mets True si tu veux voir les requêtes SQL dans les logs
-    pool_pre_ping=True,  # Vérifie la validité des connexions
+    echo=False,
+    pool_pre_ping=True,
 )
 
 # ----------------------------------------------------------------------
@@ -42,12 +43,6 @@ Base = declarative_base()
 # ----------------------------------------------------------------------
 # 5️⃣ Dépendance FastAPI : session par requête
 # ----------------------------------------------------------------------
-# ❗ CORRECTION IMPORTANTE :
-# On ne décore PAS avec @asynccontextmanager, FastAPI gère déjà le cycle de vie async.
 async def get_async_session() -> AsyncSession:
-    """
-    Ouvre une session de base de données asynchrone pour chaque requête FastAPI.
-    Se ferme automatiquement après usage.
-    """
     async with AsyncSessionLocal() as session:
         yield session

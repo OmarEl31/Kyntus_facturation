@@ -3,120 +3,241 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from core.database import get_async_session
-from typing import Optional
+from typing import Optional, Literal
 import logging
+
+from fastapi.responses import StreamingResponse
+import io
+import csv
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/dossiers", tags=["Dossiers"])
 
+# --------------------------------------------------------------------
+# Liste Dossiers = lecture de canonique.v_croisement (croisement Praxedo ⟷ PIDI)
+# --------------------------------------------------------------------
 @router.get("/")
 async def list_dossiers(
-    nd: Optional[str] = Query(None, description="Recherche ND (global/praxedo/pidi) ou N° OT"),
-    statut: Optional[str] = Query(None, description="Filtrer par statut de facturation"),
-    code_cible: Optional[str] = Query(None, description="Filtrer par code cible"),
-    session: AsyncSession = Depends(get_async_session)
+    q: Optional[str] = Query(
+        None,
+        description="Recherche dans OT (ot_key) / ND Praxedo / ND PIDI",
+    ),
+    statut: Optional[
+        Literal["OK", "ABSENT_PIDI", "ABSENT_PIDI_>48H", "ABSENT_PRAXEDO", "ND_DIFF"]
+    ] = Query(None, description="Filtrer par statut_croisement"),
+    attachement: Optional[str] = Query(
+        None, description="Filtrer par statut_pidi (PIDI) - texte libre"
+    ),
+    session: AsyncSession = Depends(get_async_session),
 ):
     """
-    Liste *complète* des dossiers facturables (sans pagination).
-    Renvoie les colonnes enrichies issues de canonique.dossier.
+    Retourne le croisement PRAXEDO ↔ PIDI.
+    Source: canonique.v_croisement
+    Colonnes clés: ot_key, nd_praxedo, nd_pidi, statut_praxedo, statut_pidi, date_planifiee, statut_croisement.
     """
     try:
         where = []
         params = {}
 
-        # --- filtres optionnels
-        if nd:
+        # Recherche globale (OT / ND)
+        if q:
             where.append(
                 """(
-                    f.nd_global ILIKE '%' || :nd || '%'
-                 OR f.nd_praxedo ILIKE '%' || :nd || '%'
-                 OR f.nd_pidi ILIKE '%' || :nd || '%'
-                 OR d.nd::text ILIKE '%' || :nd || '%'
-                 OR d.numero_ot::text ILIKE '%' || :nd || '%'
+                    ot_key ILIKE '%' || :q || '%'
+                 OR nd_praxedo ILIKE '%' || :q || '%'
+                 OR nd_pidi ILIKE '%' || :q || '%'
                 )"""
             )
-            params["nd"] = nd
+            params["q"] = q
 
+        # Filtre par statut de croisement
         if statut:
-            where.append("f.statut_facturation = :statut")
+            where.append("statut_croisement = :statut")
             params["statut"] = statut
 
-        if code_cible:
-            where.append("f.code_cible = :code_cible")
-            params["code_cible"] = code_cible
+        # Filtre par statut PIDI
+        if attachement:
+            where.append("statut_pidi ILIKE '%' || :att || '%'")
+            params["att"] = attachement
 
         where_clause = f"WHERE {' AND '.join(where)}" if where else ""
 
-        # --- jointure "robuste" sur ND (global/praxedo/pidi) et N° OT
+        # ⚙️ Requête principale
         query = text(f"""
             SELECT
-                f.id,
-                f.nd_global                                               AS nd_global,
-                f.code_cible                                              AS code_cible,
-                COALESCE(r.libelle, f.regle_facturable)                   AS regle_facturable,
-                f.statut_facturation                                      AS statut_facturation,
-                f.montant                                                 AS montant,
-                f.created_at                                              AS created_at,
-
-                d.nd                                                      AS nd,
-                d.numero_ot                                               AS numero_ot,
-                d.activite_code                                           AS activite,
-                d.produit_code                                            AS produit,
-                d.code_cloture_code                                       AS code_cloture,
-                d.statut_praxedo                                          AS statut_praxedo,
-                d.statut_pidi                                             AS statut_pidi,
-                d.commentaire                                             AS commentaire_source,
-                d.date_planifiee                                          AS date_planifiee,
-                d.date_cloture                                            AS date_cloture
-
-            FROM canonique.dossier_facturable f
-            LEFT JOIN canonique.dossier d
-                   ON d.nd::text = COALESCE(f.nd_global, f.nd_praxedo, f.nd_pidi)
-                   OR d.numero_ot::text = COALESCE(f.nd_global, f.nd_praxedo, f.nd_pidi)
-            LEFT JOIN referentiels.regle_facturation r
-                   ON r.id::text = f.regle_code     -- cast pour éviter bigint=text
-
+                ot_key,
+                nd_praxedo,
+                nd_pidi,
+                statut_praxedo,
+                statut_pidi,
+                date_planifiee,
+                statut_croisement
+            FROM canonique.v_croisement
             {where_clause}
-            ORDER BY f.created_at DESC
+            ORDER BY
+                -- priorité aux dossiers en anomalie, puis récents
+                CASE
+                    WHEN statut_croisement = 'OK' THEN 2 ELSE 1
+                END,
+                date_planifiee DESC NULLS LAST,
+                ot_key
         """)
-        res = await session.execute(query, params)
-        rows = [dict(r) for r in res.mappings().all()]
-
-        return rows
-
+        rows = (await session.execute(query, params)).mappings().all()
+        return [dict(r) for r in rows]
     except Exception as e:
-        logger.error(f"Erreur dossiers: {e}")
+        logger.exception("Erreur list_dossiers")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{dossier_id}")
+# --------------------------------------------------------------------
+# Détail d'un dossier = en clé OT
+# --------------------------------------------------------------------
+@router.get("/{ot_key}")
 async def get_dossier(
-    dossier_id: int,
+    ot_key: str,
     session: AsyncSession = Depends(get_async_session),
 ):
+    """
+    Détail d'un croisement à partir de l'OT (ot_key).
+    """
     try:
         query = text("""
             SELECT
-                f.id, f.nd_global, f.code_cible,
-                COALESCE(r.libelle, f.regle_facturable) AS regle_facturable,
-                f.statut_facturation, f.montant, f.created_at,
-                d.nd, d.numero_ot, d.activite_code AS activite, d.produit_code AS produit,
-                d.code_cloture_code AS code_cloture, d.statut_praxedo, d.statut_pidi,
-                d.commentaire AS commentaire_source, d.date_planifiee, d.date_cloture
-            FROM canonique.dossier_facturable f
-            LEFT JOIN canonique.dossier d
-                   ON d.nd::text = COALESCE(f.nd_global, f.nd_praxedo, f.nd_pidi)
-                   OR d.numero_ot::text = COALESCE(f.nd_global, f.nd_praxedo, f.nd_pidi)
-            LEFT JOIN referentiels.regle_facturation r
-                   ON r.id::text = f.regle_code
-            WHERE f.id = :id
+                ot_key,
+                nd_praxedo,
+                nd_pidi,
+                statut_praxedo,
+                statut_pidi,
+                date_planifiee,
+                statut_croisement
+            FROM canonique.v_croisement
+            WHERE ot_key = :ot
+            LIMIT 1
         """)
-        row = (await session.execute(query, {"id": dossier_id})).mappings().first()
+        row = (await session.execute(query, {"ot": ot_key})).mappings().first()
         if not row:
-            raise HTTPException(status_code=404, detail="Dossier non trouvé")
+            raise HTTPException(status_code=404, detail="Dossier introuvable")
         return dict(row)
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Erreur get_dossier")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --------------------------------------------------------------------
+# Petites stats utiles (pour des widgets frontend)
+# --------------------------------------------------------------------
+@router.get("/_stats/repartition")
+async def stats_repartition(session: AsyncSession = Depends(get_async_session)):
+    """
+    Donne la répartition par statut_croisement.
+    """
+    try:
+        query = text("""
+            SELECT statut_croisement, COUNT(*) as count
+            FROM canonique.v_croisement
+            GROUP BY 1
+            ORDER BY 2 DESC
+        """)
+        rows = (await session.execute(query)).mappings().all()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.exception("Erreur stats_repartition")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/export")
+async def export_dossiers(
+    q: Optional[str] = Query(None, description="Recherche dans OT / ND Praxedo / ND PIDI"),
+    statut: Optional[str] = Query(None, description="Filtrer par statut_croisement"),
+    attachement: Optional[str] = Query(None, description="Filtrer par statut_pidi (PIDI)"),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    Exporte le croisement PRAXEDO ↔ PIDI en CSV.
+    Colonnes : ot_key, nd_praxedo, nd_pidi, statut_praxedo, statut_pidi, date_planifiee, statut_croisement.
+    Les filtres `q`, `statut`, et `attachement` sont optionnels.
+    """
+    try:
+        where = []
+        params = {}
+
+        # 🔍 Recherche texte libre
+        if q:
+            where.append("""
+                (
+                    ot_key ILIKE '%' || :q || '%'
+                 OR nd_praxedo ILIKE '%' || :q || '%'
+                 OR nd_pidi ILIKE '%' || :q || '%'
+                )
+            """)
+            params["q"] = q
+
+        # 🔖 Filtre par statut croisement
+        if statut:
+            where.append("statut_croisement = :statut")
+            params["statut"] = statut
+
+        # 📎 Filtre par statut PIDI (attachement)
+        if attachement:
+            where.append("statut_pidi ILIKE '%' || :att || '%'")
+            params["att"] = attachement
+
+        where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+
+        # ✅ Requête principale
+        query = text(f"""
+            SELECT
+                ot_key,
+                nd_praxedo,
+                nd_pidi,
+                statut_praxedo,
+                statut_pidi,
+                date_planifiee,
+                statut_croisement
+            FROM canonique.v_croisement
+            {where_clause}
+            ORDER BY date_planifiee DESC NULLS LAST
+        """)
+
+        rows = (await session.execute(query, params)).mappings().all()
+
+        if not rows:
+            raise HTTPException(status_code=404, detail="Aucun dossier trouvé à exporter")
+
+        # 🧾 Génération CSV en mémoire
+        output = io.StringIO()
+        writer = csv.DictWriter(
+            output,
+            fieldnames=[
+                "ot_key",
+                "nd_praxedo",
+                "nd_pidi",
+                "statut_praxedo",
+                "statut_pidi",
+                "date_planifiee",
+                "statut_croisement",
+            ],
+            delimiter=";",
+        )
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: (v if v is not None else "") for k, v in dict(row).items()})
+
+        output.seek(0)
+        filename = f"dossiers_export_{statut or 'tous'}.csv"
+
+        # 📤 Retour en flux CSV
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode("utf-8-sig")),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Erreur export_dossiers")
         raise HTTPException(status_code=500, detail=str(e))

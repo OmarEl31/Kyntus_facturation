@@ -1,5 +1,4 @@
 # Backend/routes/imports.py
-# Backend/routes/imports.py
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -9,59 +8,62 @@ import csv, io, json, logging
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/import", tags=["Imports"])
 
+
+# ---------------------------------------------------------
+# Utilitaires lecture CSV
+# ---------------------------------------------------------
 async def _read_csv(file: UploadFile, delimiter: str) -> list[dict]:
+    """Lit un fichier CSV et renvoie une liste de dictionnaires."""
     content = await file.read()
     decoded = content.decode("utf-8-sig", errors="replace")
     reader = csv.DictReader(io.StringIO(decoded), delimiter=delimiter)
-    rows = [{(k or "").strip(): (v.strip() if v is not None else None) for k, v in row.items()} for row in reader]
+    rows = [
+        {(k or "").strip(): (v.strip() if v is not None else None) for k, v in row.items()}
+        for row in reader
+    ]
     if not rows:
         raise HTTPException(status_code=400, detail="Fichier vide ou mal formaté")
     return rows
 
+
+# ---------------------------------------------------------
+# A/ Étape RAW (stockage brut JSONB + log batch)
+# ---------------------------------------------------------
 async def _stage_raw(session: AsyncSession, source: str, filename: str, rows: list[dict]) -> int:
     """
-    Transaction A : créer un log + vider/injecter RAW.<source>
-    Retourne log_id (batch_id).
+    1) Crée un log d'import dans norm.import_log
+    2) Vide la table raw.<source>_raw
+    3) Insert les lignes au format JSONB
     """
     try:
-        # 1) Insert log  (!!! CAST explicite, pas ::)
         res = await session.execute(
-    text("""
-        INSERT INTO norm.import_log (source_type, filename, nb_lignes_ok, import_date)
-        VALUES (CAST(:source AS public.source_type), :filename, :rows, NOW())
-        RETURNING id
-    """),
-    {"source": source, "filename": filename, "rows": len(rows)},
-)
+            text("""
+                INSERT INTO norm.import_log (source_type, filename, nb_lignes_ok, import_date)
+                VALUES (CAST(:source AS public.source_type), :filename, :rows, NOW())
+                RETURNING id
+            """),
+            {"source": source, "filename": filename, "rows": len(rows)},
+        )
+        batch_id = res.scalar_one()
 
-        log_id = res.scalar_one()
+        table_raw = f"raw.{source.lower()}_raw"
+        await session.execute(text(f"TRUNCATE TABLE {table_raw} RESTART IDENTITY"))
 
-        # 2) TRUNCATE RAW.<source>
-        table_raw = f'raw.{source.lower()}'
-        await session.execute(text(f'TRUNCATE TABLE {table_raw} RESTART IDENTITY;'))
-
-        # 3) Insert JSONB lignes (json.dumps au lieu du replace())
         insert_sql = text(f"""
             INSERT INTO {table_raw} (payload, batch_id, src_line, imported_at)
             VALUES (:payload, :batch_id, :src_line, NOW())
         """)
-        
-        # Préparation des données pour l'insertion en masse (executemany)
-        data_to_insert = [
-            {
-                "payload": json.dumps(r, ensure_ascii=False),
-                "batch_id": log_id,
-                "src_line": idx,
-            }
-            for idx, r in enumerate(rows, start=2)  # header = ligne 1
+
+        to_insert = [
+            {"payload": json.dumps(r, ensure_ascii=False), "batch_id": batch_id, "src_line": i}
+            for i, r in enumerate(rows, start=2)
         ]
-        
-        # Exécution en masse
-        if data_to_insert:
-            await session.execute(insert_sql, data_to_insert)
+
+        if to_insert:
+            await session.execute(insert_sql, to_insert)
 
         await session.commit()
-        return log_id
+        return batch_id
 
     except Exception as e:
         await session.rollback()
@@ -69,60 +71,77 @@ async def _stage_raw(session: AsyncSession, source: str, filename: str, rows: li
         raise HTTPException(status_code=500, detail=f"Erreur étape RAW: {e}")
 
 
+# ---------------------------------------------------------
+# B/ Étape NORM (parse JSONB → colonnes utiles)
+# ---------------------------------------------------------
 async def _stage_norm(session: AsyncSession, source: str, batch_id: int):
-    """
-    Transaction B : RAW -> NORM (par INSERT SELECT)
-    """
+    """Alimente norm.<source>_norm à partir de raw.<source>_raw."""
     try:
         if source == "PRAXEDO":
-            # mappe les champs à ta structure norm.praxedo_norm
-            await session.execute(text("""
+            await session.execute(
+                text("""
                 INSERT INTO norm.praxedo_norm (
                     batch_id, nd, numero_ot, activite_code, produit_code,
-                    code_cloture_code, statut_praxedo, commentaire, date_planifiee,
-                    date_cloture, imported_at
+                    code_cloture_code, statut_praxedo, commentaire,
+                    date_planifiee, date_cloture, imported_at
                 )
                 SELECT
                     r.batch_id,
-                    COALESCE(NULLIF(TRIM(r.payload->>'nd'), ''), '')                         AS nd,
-                    COALESCE(NULLIF(TRIM(r.payload->>'numero_ot'), ''), '')                  AS numero_ot,
-                    COALESCE(NULLIF(TRIM(r.payload->>'activite_code'), ''), '')              AS activite_code,
-                    COALESCE(NULLIF(TRIM(r.payload->>'produit_code'), ''), '')               AS produit_code,
-                    COALESCE(NULLIF(TRIM(r.payload->>'code_cloture_code'), ''), '')          AS code_cloture_code,
-                    COALESCE(NULLIF(TRIM(r.payload->>'statut_praxedo'), ''), '')             AS statut_praxedo,
-                    COALESCE(NULLIF(TRIM(r.payload->>'commentaire'), ''), '')                AS commentaire,
-                    CASE
-                        WHEN (r.payload->>'date_planifiee') ~ '^[0-9]{4}-'
-                            THEN (r.payload->>'date_planifiee')::timestamp
-                        ELSE NULL
-                    END AS date_planifiee,
-                    CASE
-                        WHEN (r.payload->>'date_cloture') ~ '^[0-9]{4}-'
-                            THEN (r.payload->>'date_cloture')::timestamp
-                        ELSE NULL
-                    END AS date_cloture,
+                    NULLIF(TRIM(COALESCE(r.payload->>'ND', r.payload->>'nd')), '') AS nd,
+                    NULLIF(TRIM(
+                        COALESCE(
+                            r.payload->>'numero_ot',
+                            r.payload->>'N° OT', r.payload->>'N OT',
+                            r.payload->>'N°OT', r.payload->>'N'
+                        )
+                    ), '') AS numero_ot,
+                    NULLIF(TRIM(
+                        COALESCE(r.payload->>'Code intervention', r.payload->>'code_intervention', r.payload->>'activite_code')
+                    ), '') AS activite_code,
+                    NULLIF(TRIM(COALESCE(r.payload->>'Act/Prod', r.payload->>'produit_code')), '') AS produit_code,
+                    NULLIF(TRIM(COALESCE(r.payload->>'Code clôture', r.payload->>'code_cloture_code')), '') AS code_cloture_code,
+                    lower(NULLIF(TRIM(COALESCE(r.payload->>'Statut', r.payload->>'statut', r.payload->>'statut_praxedo')), '')) AS statut_praxedo,
+                    NULLIF(TRIM(COALESCE(r.payload->>'Commentaire', r.payload->>'commentaire')), '') AS commentaire,
+                    CASE WHEN COALESCE(r.payload->>'Planifiée', r.payload->>'date_planifiee') ~ '^[0-9]{4}-'
+                        THEN (COALESCE(r.payload->>'Planifiée', r.payload->>'date_planifiee'))::timestamp
+                        ELSE NULL END AS date_planifiee,
+                    CASE WHEN r.payload->>'date_cloture' ~ '^[0-9]{4}-'
+                        THEN (r.payload->>'date_cloture')::timestamp
+                        ELSE NULL END AS date_cloture,
                     NOW()
-                FROM raw.praxedo r
-                WHERE r.batch_id = :batch_id
-            """), {"batch_id": batch_id})
+                FROM raw.praxedo_raw r
+                WHERE r.batch_id = :b
+                """),
+                {"b": batch_id},
+            )
 
         elif source == "PIDI":
-            await session.execute(text("""
+            await session.execute(
+                text("""
                 INSERT INTO norm.pidi_norm (
-                    batch_id, nd, numero_ot, statut_pidi, commentaire, imported_at
+                    batch_id, nd, numero_ot, statut_pidi, commentaire, agence, imported_at
                 )
                 SELECT
                     r.batch_id,
-                    COALESCE(NULLIF(TRIM(r.payload->>'nd'), ''), '')            AS nd,
-                    COALESCE(NULLIF(TRIM(r.payload->>'numero_ot'), ''), '')     AS numero_ot,
-                    COALESCE(NULLIF(TRIM(r.payload->>'statut_pidi'), ''), '')   AS statut_pidi,
-                    COALESCE(NULLIF(TRIM(r.payload->>'commentaire'), ''), '')   AS commentaire,
+                    NULLIF(TRIM(COALESCE(r.payload->>'ND', r.payload->>'nd')), '') AS nd,
+                    NULLIF(TRIM(COALESCE(
+                        r.payload->>'numero_ot', r.payload->>'N° OT', r.payload->>'N OT', r.payload->>'N°OT', r.payload->>'N'
+                    )), '') AS numero_ot,
+                    lower(NULLIF(TRIM(
+                        COALESCE(
+                            r.payload->>'Statut attachement', r.payload->>'Statut att.', r.payload->>'statut_pidi', r.payload->>'Statut'
+                        )
+                    ), '')) AS statut_pidi,
+                    NULLIF(TRIM(COALESCE(r.payload->>'Commentaire', r.payload->>'commentaire')), '') AS commentaire,
+                    NULLIF(TRIM(COALESCE(r.payload->>'Agence', r.payload->>'agence')), '') AS agence,
                     NOW()
-                FROM raw.pidi r
-                WHERE r.batch_id = :batch_id
-            """), {"batch_id": batch_id})
+                FROM raw.pidi_raw r
+                WHERE r.batch_id = :b
+                """),
+                {"b": batch_id},
+            )
         else:
-            raise HTTPException(400, f"Source non gérée: {source}")
+            raise HTTPException(status_code=400, detail=f"Source non gérée: {source}")
 
         await session.commit()
 
@@ -132,33 +151,64 @@ async def _stage_norm(session: AsyncSession, source: str, batch_id: int):
         raise HTTPException(status_code=500, detail=f"Erreur étape NORM: {e}")
 
 
+# ---------------------------------------------------------
+# C/ Étape CANONIQUE (fusion Praxedo + PIDI, sans FULL JOIN, sans doublons)
+# ---------------------------------------------------------
 async def _stage_canonique(session: AsyncSession, batch_id: int):
     """
-    Transaction C : NORM -> CANONIQUE (exemple d’upsert)
+    Fusionne Praxedo et PIDI dans canonique.dossier sans FULL JOIN,
+    et supprime les doublons avant INSERT (DISTINCT ON).
     """
     try:
         await session.execute(text("""
+            WITH merged AS (
+                SELECT DISTINCT ON (COALESCE(p.nd, i.nd), COALESCE(p.numero_ot, i.numero_ot))
+                    COALESCE(p.nd, i.nd) AS nd,
+                    COALESCE(p.numero_ot, i.numero_ot) AS numero_ot,
+                    COALESCE(p.activite_code, NULL) AS activite_code,
+                    COALESCE(p.produit_code, NULL) AS produit_code,
+                    COALESCE(p.code_cloture_code, NULL) AS code_cloture_code,
+                    p.statut_praxedo,
+                    i.statut_pidi,
+                    COALESCE(i.commentaire, p.commentaire) AS commentaire,
+                    p.date_planifiee,
+                    p.date_cloture,
+                    NOW() AS updated_at
+                FROM (
+                    SELECT * FROM norm.praxedo_norm WHERE batch_id = :b
+                ) p
+                LEFT JOIN (
+                    SELECT * FROM norm.pidi_norm WHERE batch_id = :b
+                ) i
+                ON (p.nd = i.nd OR p.numero_ot = i.numero_ot)
+
+                UNION ALL
+
+                SELECT DISTINCT ON (COALESCE(p.nd, i.nd), COALESCE(p.numero_ot, i.numero_ot))
+                    COALESCE(p.nd, i.nd) AS nd,
+                    COALESCE(p.numero_ot, i.numero_ot) AS numero_ot,
+                    COALESCE(p.activite_code, NULL) AS activite_code,
+                    COALESCE(p.produit_code, NULL) AS produit_code,
+                    COALESCE(p.code_cloture_code, NULL) AS code_cloture_code,
+                    p.statut_praxedo,
+                    i.statut_pidi,
+                    COALESCE(i.commentaire, p.commentaire) AS commentaire,
+                    p.date_planifiee,
+                    p.date_cloture,
+                    NOW() AS updated_at
+                FROM (
+                    SELECT * FROM norm.pidi_norm WHERE batch_id = :b
+                ) i
+                LEFT JOIN (
+                    SELECT * FROM norm.praxedo_norm WHERE batch_id = :b
+                ) p
+                ON (p.nd = i.nd OR p.numero_ot = i.numero_ot)
+            )
             INSERT INTO canonique.dossier (
                 nd, numero_ot, activite_code, produit_code, code_cloture_code,
                 statut_praxedo, statut_pidi, commentaire, date_planifiee, date_cloture, updated_at
             )
-            SELECT DISTINCT -- CORRECTION FINALE : Ajout de DISTINCT pour éviter les doublons dans l'upsert
-                COALESCE(p.nd, i.nd)                       AS nd,
-                COALESCE(p.numero_ot, i.numero_ot)         AS numero_ot,
-                p.activite_code,
-                p.produit_code,
-                p.code_cloture_code,
-                p.statut_praxedo,
-                NULL AS statut_pidi,
-                COALESCE(i.commentaire, p.commentaire)     AS commentaire,
-                p.date_planifiee,
-                p.date_cloture,
-                NOW()
-            FROM norm.praxedo_norm p
-            FULL JOIN norm.pidi_norm i
-              ON (p.batch_id = :b)
-             AND (p.nd = i.nd OR p.numero_ot = i.numero_ot)
-            WHERE (p.batch_id = :b)
+            SELECT * FROM merged
             ON CONFLICT (nd, numero_ot)
             DO UPDATE SET
               activite_code     = EXCLUDED.activite_code,
@@ -172,39 +222,30 @@ async def _stage_canonique(session: AsyncSession, batch_id: int):
               updated_at        = NOW();
         """), {"b": batch_id})
 
-        # éventuel refresh des facturables
-        await session.execute(text("""
-            UPDATE canonique.dossier_facturable
-               SET updated_at = NOW()
-             WHERE nd_global IN (
-                   SELECT nd FROM norm.praxedo_norm WHERE batch_id = :b
-                   UNION
-                   SELECT nd FROM norm.pidi_norm    WHERE batch_id = :b
-             );
-        """), {"b": batch_id})
-
         await session.commit()
 
     except Exception as e:
         await session.rollback()
-        logger.exception("Erreur étape CANONIQUE")
         raise HTTPException(status_code=500, detail=f"Erreur étape CANONIQUE: {e}")
 
 
+# ---------------------------------------------------------
+# Endpoints REST
+# ---------------------------------------------------------
 @router.post("/praxedo")
 async def import_praxedo(
     file: UploadFile = File(...),
     delimiter: str = Form(";"),
     session: AsyncSession = Depends(get_async_session),
 ):
-    rows = await _read_csv(file, delimiter)
-    # A — RAW
-    batch_id = await _stage_raw(session, "PRAXEDO", file.filename, rows)
-    # B — NORM
-    await _stage_norm(session, "PRAXEDO", batch_id)
-    # C — CANONIQUE
-    await _stage_canonique(session, batch_id)
-    return {"ok": True, "rows": len(rows), "batch_id": batch_id}
+    try:
+        rows = await _read_csv(file, delimiter)
+        batch_id = await _stage_raw(session, "PRAXEDO", file.filename, rows)
+        await _stage_norm(session, "PRAXEDO", batch_id)
+        await _stage_canonique(session, batch_id)
+        return {"ok": True, "rows": len(rows), "batch_id": batch_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/pidi")
@@ -213,8 +254,11 @@ async def import_pidi(
     delimiter: str = Form(";"),
     session: AsyncSession = Depends(get_async_session),
 ):
-    rows = await _read_csv(file, delimiter)
-    batch_id = await _stage_raw(session, "PIDI", file.filename, rows)
-    await _stage_norm(session, "PIDI", batch_id)
-    await _stage_canonique(session, batch_id)
-    return {"ok": True, "rows": len(rows), "batch_id": batch_id}
+    try:
+        rows = await _read_csv(file, delimiter)
+        batch_id = await _stage_raw(session, "PIDI", file.filename, rows)
+        await _stage_norm(session, "PIDI", batch_id)
+        await _stage_canonique(session, batch_id)
+        return {"ok": True, "rows": len(rows), "batch_id": batch_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

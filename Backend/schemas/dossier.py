@@ -4,15 +4,13 @@ from typing import Optional
 from datetime import datetime
 
 class DossierOut(BaseModel):
-    nd_global: Optional[str] = None
+    ot_key: str
     nd_praxedo: Optional[str] = None
     nd_pidi: Optional[str] = None
-    code_cible: Optional[str] = None
-    regle_facturable: Optional[str] = None
-    statut_facturation: Optional[str] = None
-    montant: Optional[float] = None
-    client_id: Optional[str] = None
-    created_at: Optional[datetime] = None
+    statut_praxedo: Optional[str] = None
+    statut_attachement: Optional[str] = None
+    date_planifiee: Optional[datetime] = None
+    statut_croisement: str
 
 class PageOut(BaseModel):
     items: list[DossierOut]
