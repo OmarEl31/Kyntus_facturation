@@ -1,19 +1,26 @@
 version: "3.9"
 
 services:
+  # ============================
+  # 🐘 Base de données PostgreSQL
+  # ============================
   db:
     image: postgres:15
     container_name: kyntus_db_main
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-kyntus_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kyntus_pass}
-      POSTGRES_DB: ${POSTGRES_DB:-kyntus_db}
+      POSTGRES_USER: kyntus_user
+      POSTGRES_PASSWORD: kyntus_pass
+      POSTGRES_DB: Kynt_fac_DB
     ports:
       - "5432:5432"
     volumes:
       - kyntus_data:/var/lib/postgresql/data
-    networks: [kyntus_net]
+    networks:
+      - kyntus_net
 
+  # ============================
+  # 🧭 Interface d’administration PGAdmin
+  # ============================
   pgadmin:
     image: dpage/pgadmin4
     container_name: kyntus_pgadmin_
@@ -22,11 +29,16 @@ services:
       PGADMIN_DEFAULT_PASSWORD: admin123
     ports:
       - "5050:80"
-    depends_on: [db]
+    depends_on:
+      - db
     volumes:
       - pgadmin_data:/var/lib/pgadmin
-    networks: [kyntus_net]
+    networks:
+      - kyntus_net
 
+  # ============================
+  # ⚙️ Backend FastAPI (Python)
+  # ============================
   backend:
     build:
       context: .
@@ -34,17 +46,20 @@ services:
     container_name: kyntus_backend
     env_file:
       - ./Backend/.env
-    environment:
-      PYTHONPATH: "/app:/app/Backend"
     working_dir: /app/Backend
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./Backend:/app/Backend
-    depends_on: [db]
+    depends_on:
+      - db
     ports:
       - "8000:8000"
-    networks: [kyntus_net]
+    networks:
+      - kyntus_net
 
+  # ============================
+  # 💻 Frontend Next.js (React)
+  # ============================
   frontend:
     build:
       context: ./Frontend
@@ -54,15 +69,23 @@ services:
       NEXT_PUBLIC_API_URL: http://localhost:8000
     volumes:
       - ./Frontend:/app
-    depends_on: [backend]
+    depends_on:
+      - backend
     ports:
       - "3000:3000"
-    networks: [kyntus_net]
+    networks:
+      - kyntus_net
 
+# ============================
+# 💾 Volumes persistants
+# ============================
 volumes:
   kyntus_data:
   pgadmin_data:
 
+# ============================
+# 🌐 Réseau commun
+# ============================
 networks:
   kyntus_net:
     driver: bridge

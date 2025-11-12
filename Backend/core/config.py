@@ -1,13 +1,16 @@
-import os
+from functools import lru_cache
+from pydantic_settings import BaseSettings
 
-class Settings:
-    POSTGRES_USER: str = os.getenv("POSTGRES_USER", "kyntus_user")
-    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "kyntus_pass")
-    POSTGRES_DB: str = os.getenv("POSTGRES_DB", "kyntus_db")
-    POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "kyntus_db")  # ✅ doit être kyntus_db
 
-    DATABASE_URL: str = (
-        f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:5432/{POSTGRES_DB}"
-    )
+class Settings(BaseSettings):
+    DATABASE_URL: str
+    CORS_ORIGINS: str = "*"
 
-settings = Settings()
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+
+
+@lru_cache
+def get_settings():
+    return Settings()

@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from database.connection import get_db
-from database.models import Ping
+from models import Ping
+
 from schemas.intervention_schema import PingOut
 
 router = APIRouter()
