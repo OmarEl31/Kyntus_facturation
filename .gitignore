@@ -13,7 +13,7 @@ venv/
 *.log
 
 # React / Node
-node_modules/
+#node_modules/
 build/
 dist/
 .npm/
