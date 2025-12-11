@@ -1,0 +1,8 @@
+﻿node_modules/
+.next/
+dist/
+build/
+*.zip
+*.log
+.env
+.env.local
