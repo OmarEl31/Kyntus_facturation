@@ -1,7 +1,6 @@
-#Backend/routes/intervention_routes
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from Backend.database.connection import get_db
+from database.connection import get_db
 from models import Ping
 
 from schemas.intervention_schema import PingOut

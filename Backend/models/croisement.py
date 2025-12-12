@@ -1,6 +1,7 @@
-#Backen/models/croisement.py
-from sqlalchemy import Column, Text, TIMESTAMP, Boolean
+# Backend/models/croisement.py
+from sqlalchemy import Column, Text, TIMESTAMP
 from database.connection import Base
+
 
 class VCroisement(Base):
     __tablename__ = "v_croisement"

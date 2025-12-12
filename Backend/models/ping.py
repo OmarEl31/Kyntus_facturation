@@ -1,6 +1,5 @@
-# Backend/models/ping.py
 from sqlalchemy import Column, Integer, String
-from database.connection import Base
+from database.connection import Base  # vérifie bien que Base vient de ton fichier connection.py
 
 class Ping(Base):
     __tablename__ = "ping"

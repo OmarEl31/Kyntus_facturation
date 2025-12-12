@@ -1,46 +1,45 @@
 // frontend/services/dossiersApi.ts
 
-export type CroisementStatut =
-  | "OK"
-  | "MANQUANT_PIDI"
-  | "MANQUANT_PRAXEDO"
-  | "INCONNU";
+import type {
+  DossierFacturable,
+  StatutFinal,
+  CroisementStatut,
+} from "@/types/dossier";
 
-export type CroisementDossier = {
-  ot_key: string;
-  nd_global: string | null;
-  activite_code?: string | null;
-  code_cible?: string | null;
-  code_cloture_code?: string | null;
-  date_planifiee?: string | null;
-  statut_praxedo?: string | null;
-  statut_pidi?: string | null;
-  statut_croisement: CroisementStatut;
-  commentaire_praxedo?: string | null;
-  generated_at?: string | null;
+export type DossiersFilters = {
+  q?: string;
+  statut?: StatutFinal;
+  croisement?: CroisementStatut;
 };
 
-export const croisementStatuts: readonly CroisementStatut[] = [
-  "OK",
-  "MANQUANT_PIDI",
-  "MANQUANT_PRAXEDO",
-  "INCONNU",
-] as const;
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export const statutsFinal: readonly StatutFinal[] = [
+  "FACTURABLE",
+  "CONDITIONNEL",
+  "NON_FACTURABLE",
+  "A_VERIFIER",
+];
 
-export async function listCroisement(params?: {
-  q?: string;
-  statut?: CroisementStatut;
-  statut_pidi_contains?: string;
-}): Promise<CroisementDossier[]> {
-  const u = new URL(`${API}/api/dossiers`);
-  if (params?.q) u.searchParams.set("q", params.q);
-  if (params?.statut) u.searchParams.set("statut", params.statut);
-  if (params?.statut_pidi_contains)
-    u.searchParams.set("attachement", params.statut_pidi_contains);
+export async function listDossiers(
+  filters?: DossiersFilters
+): Promise<DossierFacturable[]> {
+  const params = new URLSearchParams();
 
-  const res = await fetch(u.toString(), { cache: "no-store" });
-  if (!res.ok) throw new Error("Erreur API /api/dossiers");
-  return await res.json();
+  if (filters?.q) params.set("q", filters.q.trim());
+  if (filters?.statut) params.set("statut", filters.statut);
+  if (filters?.croisement) params.set("croisement", filters.croisement);
+
+  const qs = params.toString();
+  const url = `${API_BASE}/api/dossiers${qs ? `?${qs}` : ""}`;
+
+  const res = await fetch(url);
+  if (!res.ok) {
+    console.error("Erreur /api/dossiers", await res.text());
+    throw new Error("Erreur API /api/dossiers");
+  }
+
+  const data = (await res.json()) as DossierFacturable[];
+  return data;
 }

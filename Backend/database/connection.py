@@ -1,19 +1,21 @@
 # Backend/database/connection.py
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-from core.config import settings
+from core.config import get_settings
 
-# Base ORM commune
+settings = get_settings()
+
+engine = create_engine(
+    settings.DATABASE_URL,
+    future=True,
+    echo=False,           # tu peux mettre True pour voir toutes les requêtes
+)
+
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+
 Base = declarative_base()
 
-# Moteur SQLAlchemy vers PostgreSQL
-engine = create_engine(settings.DATABASE_URL)
-
-# Session locale pour les requêtes synchrones
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-
 def get_db():
-    """Dépendance FastAPI pour injecter une session DB."""
     db = SessionLocal()
     try:
         yield db

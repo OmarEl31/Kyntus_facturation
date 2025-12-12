@@ -1,6 +1,5 @@
-#Backen/models/dossiers_facturable.py
-
-from sqlalchemy import Column, Text, TIMESTAMP, Boolean
+# Backend/models/dossiers_facturable.py
+from sqlalchemy import Column, Text, Boolean, TIMESTAMP
 from database.connection import Base
 
 class VDossierFacturable(Base):
@@ -9,6 +8,7 @@ class VDossierFacturable(Base):
 
     key_match = Column(Text, primary_key=True)
 
+    # Croisement
     ot_key = Column(Text)
     nd_global = Column(Text)
     statut_croisement = Column(Text)
@@ -33,14 +33,14 @@ class VDossierFacturable(Base):
     liste_articles = Column(Text)
     commentaire_pidi = Column(Text)
 
-    # RÈGLES
+    # Règles
     regle_code = Column(Text)
     libelle_regle = Column(Text)
     condition_sql = Column(Text)
     statut_facturation = Column(Text)
-    codes_cloture_facturables = Column(Text)
+    codes_cloture_facturables = Column(Text)  # stocké en text dans la vue
     type_branchement = Column(Text)
-    plp_applicable = Column(Text)
+    plp_applicable = Column(Boolean)
     services = Column(Text)
     prix_degressifs = Column(Text)
     articles_optionnels = Column(Text)
@@ -51,7 +51,10 @@ class VDossierFacturable(Base):
     code_chantier_generique = Column(Text)
     categorie = Column(Text)
 
-    # FINAL
+    # Articles
+    statut_articles = Column(Text)
+
+    # Final
     statut_final = Column(Text)
     cloture_facturable = Column(Boolean)
     generated_at = Column(TIMESTAMP)

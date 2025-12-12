@@ -1,19 +1,36 @@
 # Backend/core/config.py
-import os
-from dotenv import load_dotenv
+from functools import lru_cache
+from pydantic import BaseSettings  # ✅ on utilise pydantic classique
 
-# Charge les variables à partir du .env si présent
-load_dotenv()
 
-class Settings:
-    DB_USER = os.getenv("POSTGRES_USER", "kyntus_user")
-    DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "kyntus_pass")
-    DB_NAME = os.getenv("POSTGRES_DB", "Kynt_fac_DB")
-    DB_HOST = os.getenv("POSTGRES_HOST", "db")
-    DB_PORT = os.getenv("POSTGRES_PORT", "5432")
+class Settings(BaseSettings):
+    # Variables d’environnement
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_DB: str
+    POSTGRES_HOST: str = "db"   # nom du service docker-compose
+    POSTGRES_PORT: int = 5432
 
-    DATABASE_URL = (
-        f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-    )
+    CORS_ORIGINS: str = "*"     # pour le frontend
 
-settings = Settings()
+    @property
+    def DATABASE_URL(self) -> str:
+        """
+        Construit l’URL SQLAlchemy à partir des variables POSTGRES_*
+        Exemple :
+        postgresql+psycopg2://kyntus_user:kyntus_pass@db:5432/Kynt_fac_DB
+        """
+        return (
+            f"postgresql+psycopg2://"
+            f"{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        )
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
