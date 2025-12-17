@@ -1,5 +1,5 @@
-# Backend/models/dossiers_facturable.py
 from sqlalchemy import Column, Text, Boolean, TIMESTAMP
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from database.connection import Base
 
 class VDossierFacturable(Base):
@@ -8,24 +8,21 @@ class VDossierFacturable(Base):
 
     key_match = Column(Text, primary_key=True)
 
-    # Croisement
     ot_key = Column(Text)
     nd_global = Column(Text)
     statut_croisement = Column(Text)
 
-    # Praxedo
     praxedo_ot_key = Column(Text)
     praxedo_nd = Column(Text)
     activite_code = Column(Text)
     produit_code = Column(Text)
     code_cloture_code = Column(Text)
     statut_praxedo = Column(Text)
-    date_planifiee = Column(TIMESTAMP)
+    date_planifiee = Column(Text)  # ⚠️ text (comme ta view)
     date_cloture = Column(TIMESTAMP)
     technicien = Column(Text)
     commentaire_praxedo = Column(Text)
 
-    # PIDI
     statut_pidi = Column(Text)
     code_cible = Column(Text)
     pidi_date_creation = Column(TIMESTAMP)
@@ -33,28 +30,25 @@ class VDossierFacturable(Base):
     liste_articles = Column(Text)
     commentaire_pidi = Column(Text)
 
-    # Règles
     regle_code = Column(Text)
     libelle_regle = Column(Text)
     condition_sql = Column(Text)
     statut_facturation = Column(Text)
-    codes_cloture_facturables = Column(Text)  # stocké en text dans la vue
-    type_branchement = Column(Text)
+    codes_cloture_facturables = Column(ARRAY(Text))
+    type_branchement = Column(JSONB)
     plp_applicable = Column(Boolean)
-    services = Column(Text)
-    prix_degressifs = Column(Text)
-    articles_optionnels = Column(Text)
-    documents_attendus = Column(Text)
-    pieces_facturation = Column(Text)
-    outils_depose = Column(Text)
-    justificatifs = Column(Text)
+    services = Column(JSONB)
+    prix_degressifs = Column(JSONB)
+    articles_optionnels = Column(JSONB)
+    documents_attendus = Column(ARRAY(Text))
+    pieces_facturation = Column(ARRAY(Text))
+    outils_depose = Column(ARRAY(Text))
+    justificatifs = Column(JSONB)
     code_chantier_generique = Column(Text)
     categorie = Column(Text)
 
-    # Articles
     statut_articles = Column(Text)
 
-    # Final
     statut_final = Column(Text)
     cloture_facturable = Column(Boolean)
     generated_at = Column(TIMESTAMP)

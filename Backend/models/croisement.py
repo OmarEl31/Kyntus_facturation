@@ -1,33 +1,21 @@
-# Backend/models/croisement.py
-from sqlalchemy import Column, Text, TIMESTAMP
-from database.connection import Base
 
+from sqlalchemy import Column, String, DateTime, text
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
 
 class VCroisement(Base):
     __tablename__ = "v_croisement"
     __table_args__ = {"schema": "canonique"}
 
-    key_match = Column(Text, primary_key=True)
-    ot_key = Column(Text)
-    nd_global = Column(Text)
-    statut_croisement = Column(Text)
-
-    # Praxedo
-    praxedo_ot_key = Column(Text)
-    praxedo_nd = Column(Text)
-    activite_code = Column(Text)
-    produit_code = Column(Text)
-    code_cloture_code = Column(Text)
-    statut_praxedo = Column(Text)
-    date_planifiee = Column(TIMESTAMP)
-    date_cloture = Column(TIMESTAMP)
-    technicien = Column(Text)
-    commentaire_praxedo = Column(Text)
-
-    # PIDI
-    statut_pidi = Column(Text)
-    code_cible = Column(Text)
-    pidi_date_creation = Column(TIMESTAMP)
-    numero_att = Column(Text)
-    liste_articles = Column(Text)
-    commentaire_pidi = Column(Text)
+    ot_key = Column(String, primary_key=True)
+    nd_global = Column(String)
+    activite_code = Column(String)
+    code_cible = Column(String)
+    code_cloture_code = Column(String)
+    date_planifiee = Column(DateTime)
+    statut_praxedo = Column(String)
+    statut_pidi = Column(String)
+    commentaire_praxedo = Column(String)
+    statut_croisement = Column(String)
+    #generated_at = Column(DateTime, server_default=text("now()"))

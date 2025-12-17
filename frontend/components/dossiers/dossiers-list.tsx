@@ -1,230 +1,57 @@
-// frontend/components/dossiers/dossiers-list.tsx
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw, Upload, Download } from "lucide-react";
 
-import {
-  listDossiers,
-  statutsFinal,
-  type DossiersFilters,
-} from "@/services/dossiersApi";
-
-import type {
-  DossierFacturable,
-  StatutFinal,
-  CroisementStatut,
-} from "@/types/dossier";
+import { listDossiers, statutsFinal } from "@/services/dossiersApi";
+import type { DossierFacturable, CroisementStatut } from "@/types/dossier";
+import type { DossiersFilters } from "@/services/dossiersApi";
 
 import FiltersBar from "./filters-bar";
 import FileUploadModal from "./file-upload-modal";
 
-// ----------------------------------------------------
-//  MODALE DE VERIFICATION DES ARTICLES
-// ----------------------------------------------------
+type VerificationState = { open: boolean; dossier: DossierFacturable | null };
 
-type VerificationState = {
-  open: boolean;
-  dossier: DossierFacturable | null;
-};
-
-function VerificationModal({
-  state,
-  onClose,
-}: {
-  state: VerificationState;
-  onClose: () => void;
-}) {
-  const dossier = state.dossier;
-  if (!state.open || !dossier) return null;
-
-  const articlesAttendus =
-    dossier.documents_attendus?.join(", ") || "—";
-  const articlesPoses = dossier.liste_articles ?? "—";
-  const resultat = dossier.statut_articles ?? "N/A";
-
-  const badgeClass =
-    resultat === "OK"
-      ? "bg-green-100 text-green-700"
-      : resultat === "A_VERIFIER"
-      ? "bg-yellow-100 text-yellow-700"
-      : resultat === "A_CONTESTER"
-      ? "bg-red-100 text-red-700"
-      : "bg-red-50 text-red-600";
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white p-6 rounded shadow-lg w-[520px] max-w-full">
-        <h2 className="text-lg font-semibold mb-4">
-          Vérification des articles – OT {dossier.ot_key}
-        </h2>
-
-        <div className="space-y-3 text-sm">
-          <p>
-            <span className="font-semibold">Articles attendus :</span>{" "}
-            {articlesAttendus}
-          </p>
-          <p>
-            <span className="font-semibold">Articles posés :</span>{" "}
-            {articlesPoses}
-          </p>
-          <p className="flex items-center gap-2">
-            <span className="font-semibold">Résultat :</span>
-            <span
-              className={`px-2 py-1 rounded text-xs font-medium ${badgeClass}`}
-            >
-              {resultat}
-            </span>
-          </p>
-        </div>
-
-        <div className="mt-6 flex justify-end">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded bg-gray-100 hover:bg-gray-200 text-sm"
-          >
-            Fermer
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+function croisementLabel(s: CroisementStatut | null | undefined) {
+  if (!s) return "UNKNOWN";
+  if (s === "OK") return "OK";
+  if (s === "PIDI_only") return "ABSENT PRAXEDO";
+  if (s === "Praxedo_only") return "ABSENT PIDI";
+  return "UNKNOWN";
 }
 
-// ---------------------- BADGES UI ---------------------- //
-
-function StatutFinalBadge({ value }: { value: StatutFinal }) {
-  const map: Record<StatutFinal, string> = {
-    FACTURABLE: "bg-green-100 text-green-700",
-    CONDITIONNEL: "bg-yellow-100 text-yellow-800",
-    NON_FACTURABLE: "bg-red-100 text-red-700",
-    A_VERIFIER: "bg-orange-100 text-orange-700",
-  };
-
-  return (
-    <span className={`px-2 py-1 rounded text-xs font-medium ${map[value]}`}>
-      {(value ?? "—").replace("_", " ")}
-    </span>
-  );
+function badgeClass(status: string) {
+  if (status === "OK") return "bg-green-100 text-green-700";
+  if (status.includes("ABSENT")) return "bg-yellow-100 text-yellow-700";
+  if (status === "UNKNOWN") return "bg-gray-100 text-gray-700";
+  return "bg-gray-100 text-gray-700";
 }
 
-function CroisementBadge({
-  value,
-}: {
-  value?: CroisementStatut | string | null;
-}) {
-  if (!value) {
-    return (
-      <span className="px-2 py-1 rounded text-xs bg-gray-200 text-gray-700">
-        —
-      </span>
-    );
-  }
-
-  const map: Record<CroisementStatut, string> = {
-    OK: "bg-green-100 text-green-700",
-    ABSENT_PRAXEDO: "bg-yellow-100 text-yellow-700",
-    ABSENT_PIDI: "bg-red-100 text-red-700",
-    NON_ENVOYE_PIDI: "bg-purple-100 text-purple-700",
-    INCONNU: "bg-gray-200 text-gray-700",
-  };
-
-  const label: Record<CroisementStatut, string> = {
-    OK: "OK",
-    ABSENT_PRAXEDO: "ABSENT PRAXEDO",
-    ABSENT_PIDI: "ABSENT PIDI",
-    NON_ENVOYE_PIDI: "NON ENVOYÉ PIDI",
-    INCONNU: "INCONNU",
-  };
-
-  const v = value as CroisementStatut;
-  const classes = map[v] ?? "bg-gray-200 text-gray-700";
-  const txt = label[v] ?? String(value);
-
-  return (
-    <span className={`px-2 py-1 rounded text-xs font-medium ${classes}`}>
-      {txt}
-    </span>
-  );
+function statutFinalClass(s: string) {
+  if (s === "FACTURABLE") return "bg-green-100 text-green-700";
+  if (s === "CONDITIONNEL") return "bg-yellow-100 text-yellow-700";
+  if (s === "A_VERIFIER") return "bg-yellow-100 text-yellow-700";
+  return "bg-red-100 text-red-700";
 }
-
-function ClotureBadge({
-  label,
-  ok,
-}: {
-  label?: string | null;
-  ok?: boolean | null;
-}) {
-  if (!label) {
-    return (
-      <span className="px-2 py-1 rounded text-xs bg-gray-200 text-gray-600">
-        —
-      </span>
-    );
-  }
-
-  const cls = ok
-    ? "bg-green-100 text-green-700"
-    : "bg-purple-100 text-purple-700";
-
-  return (
-    <span className={`px-2 py-1 rounded text-xs font-medium ${cls}`}>
-      {label}
-    </span>
-  );
-}
-
-function PraxedoBadge({ value }: { value?: string | null }) {
-  if (!value) {
-    return (
-      <span className="px-2 py-1 rounded text-xs bg-gray-200 text-gray-500">
-        —
-      </span>
-    );
-  }
-
-  const map: Record<string, string> = {
-    Validée: "bg-green-100 text-green-700",
-    Planifiée: "bg-blue-100 text-blue-700",
-    Annulée: "bg-red-100 text-red-700",
-  };
-
-  return (
-    <span
-      className={`px-2 py-1 rounded text-xs font-medium ${
-        map[value] ?? "bg-gray-100 text-gray-600"
-      }`}
-    >
-      {value}
-    </span>
-  );
-}
-
-// ---------------------- COMPOSANT PRINCIPAL ---------------------- //
 
 export default function DossiersList() {
   const [items, setItems] = useState<DossierFacturable[]>([]);
   const [filters, setFilters] = useState<DossiersFilters>({});
   const [loading, setLoading] = useState(false);
-  const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | null>(
-    null
-  );
+  const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [verification, setVerification] = useState<VerificationState>({
-    open: false,
-    dossier: null,
-  });
 
-  // ---------------------- LOAD AVEC FILTRES ---------------------- //
   const load = useCallback(
     async (f?: DossiersFilters) => {
       const activeFilters = f ?? filters;
-
       setLoading(true);
       try {
         const data = await listDossiers(activeFilters);
         setItems(data);
         if (f) setFilters(f);
+      } catch (e) {
+        console.error(e);
+        setItems([]);
       } finally {
         setLoading(false);
       }
@@ -234,90 +61,53 @@ export default function DossiersList() {
 
   useEffect(() => {
     load();
-  }, [load]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const countByCroisement = useMemo(() => {
     const m = new Map<string, number>();
     for (const it of items) {
-      const k = it.statut_croisement ?? "INCONNU";
+      const k = croisementLabel(it.statut_croisement);
       m.set(k, (m.get(k) ?? 0) + 1);
     }
-    return Array.from(m.entries());
+    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [items]);
 
-  // ---------------------- EXPORT CSV ---------------------- //
-  async function handleExport() {
+  async function exportCsv() {
+    setExporting(true);
     try {
-      if (!items.length) {
-        alert("Aucune donnée à exporter.");
-        return;
-      }
-
-      setExporting(true);
-
-      const header = [
-        "OT",
-        "ND",
-        "Activité",
-        "Produit",
-        "Code cible",
-        "Clôture",
-        "Règle",
-        "Libellé règle",
-        "Statut final",
-        "Croisement",
-        "Praxedo",
-        "PIDI",
-        "Planifiée",
+      const headers = [
+        "ot_key",
+        "nd_global",
+        "activite_code",
+        "produit_code",
+        "statut_final",
+        "statut_croisement",
+        "statut_praxedo",
+        "statut_pidi",
+        "date_planifiee",
       ];
 
-      const csv = (v: unknown): string => {
-        if (v === null || v === undefined) return "";
-        const s = String(v).replace(/\r?\n/g, " ");
-        if (s.includes(";") || s.includes('"')) {
-          return `"${s.replace(/"/g, '""')}"`;
-        }
-        return s;
-      };
+      const rows = items.map((d) =>
+        headers
+          .map((h) => {
+            const v = (d as any)[h];
+            const s = v == null ? "" : String(v);
+            return `"${s.replaceAll('"', '""')}"`;
+          })
+          .join(",")
+      );
 
-      const rows = items.map((d) => {
-        const datePlanifiee = d.date_planifiee
-          ? new Date(d.date_planifiee).toLocaleString("fr-FR")
-          : "";
-
-        return [
-          csv(d.ot_key),
-          csv(d.nd_global),
-          csv(d.activite_code),
-          csv(d.produit_code),
-          csv(d.code_cible),
-          csv(d.code_cloture_code),
-          csv(d.regle_code),
-          csv(d.libelle_regle),
-          csv(d.statut_final),
-          csv(d.statut_croisement),
-          csv(d.statut_praxedo),
-          csv(d.statut_pidi),
-          csv(datePlanifiee),
-        ].join(";");
-      });
-
-      const csvContent = [header.join(";"), ...rows].join("\n");
-      const blob = new Blob([csvContent], {
-        type: "text/csv;charset=utf-8;",
-      });
-      const url = window.URL.createObjectURL(blob);
+      const csv = [headers.join(","), ...rows].join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
 
       const a = document.createElement("a");
       a.href = url;
-      a.download = "dossiers_export.csv";
-      document.body.appendChild(a);
+      a.download = `dossiers_${new Date().toISOString().slice(0, 10)}.csv`;
       a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-    } catch (e) {
-      console.error("Erreur export CSV", e);
-      alert("Erreur lors de l'export CSV.");
+
+      URL.revokeObjectURL(url);
     } finally {
       setExporting(false);
     }
@@ -325,142 +115,112 @@ export default function DossiersList() {
 
   return (
     <div className="space-y-4">
-      {/* BARRE DE FILTRES */}
-      <FiltersBar
-        onSearch={(f) => load(f)}
-        loading={loading}
-        statuts={statutsFinal}
-      />
+      <FiltersBar onSearch={(f) => load(f)} loading={loading} statuts={statutsFinal} />
 
-      {/* BOUTONS IMPORT / EXPORT */}
-      <div className="flex justify-end gap-3 pr-4">
-        <button
-          className="px-3 py-2 border rounded hover:bg-gray-50"
-          onClick={() => load(filters)}
-          disabled={loading}
-        >
-          <RefreshCw className="h-5 w-5" />
-        </button>
+      {/* Boutons */}
+      <div className="flex items-center justify-between px-2">
+        <div className="text-sm text-gray-600">
+          {loading ? "Chargement…" : `${items.length} dossiers`}
+        </div>
 
-        <button
-          onClick={() => setImportType("PRAXEDO")}
-          className="px-4 py-2 bg-white border rounded flex items-center gap-2 hover:bg-gray-50"
-        >
-          <Upload className="h-4 w-4" />
-          Praxedo
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => load(filters)}
+            className="inline-flex items-center gap-2 border rounded px-3 py-2 text-sm hover:bg-gray-50"
+            disabled={loading}
+          >
+            <RefreshCw className="h-4 w-4" />
+            Rafraîchir
+          </button>
 
-        <button
-          onClick={() => setImportType("PIDI")}
-          className="px-4 py-2 bg-white border rounded flex items-center gap-2 hover:bg-gray-50"
-        >
-          <Upload className="h-4 w-4" />
-          PIDI
-        </button>
+          <button
+            onClick={() => setImportType("PRAXEDO")}
+            className="inline-flex items-center gap-2 border rounded px-3 py-2 text-sm hover:bg-gray-50"
+          >
+            <Upload className="h-4 w-4" />
+            Praxedo
+          </button>
 
-        <button
-          onClick={handleExport}
-          disabled={exporting}
-          className="px-4 py-2 bg-blue-600 text-white rounded flex items-center gap-2 hover:bg-blue-700 disabled:opacity-60"
-        >
-          <Download className="h-4 w-4" />
-          Exporter CSV
-        </button>
+          <button
+            onClick={() => setImportType("PIDI")}
+            className="inline-flex items-center gap-2 border rounded px-3 py-2 text-sm hover:bg-gray-50"
+          >
+            <Upload className="h-4 w-4" />
+            PIDI
+          </button>
+
+          <button
+            onClick={exportCsv}
+            className="inline-flex items-center gap-2 bg-blue-600 text-white rounded px-3 py-2 text-sm hover:bg-blue-700 disabled:opacity-60"
+            disabled={exporting || items.length === 0}
+          >
+            <Download className="h-4 w-4" />
+            Exporter CSV
+          </button>
+        </div>
       </div>
 
-      {/* RÉPARTITION PAR CROISEMENT */}
-      <div className="text-sm text-gray-600 pl-2">
-        Répartition :
+      {/* Répartition */}
+      <div className="px-2 flex items-center gap-3 text-sm">
+        <span className="text-gray-600">Répartition :</span>
         {countByCroisement.map(([k, v]) => (
-          <span key={k} className="ml-3 inline-flex items-center gap-1">
-            <CroisementBadge value={k as CroisementStatut} /> {v}
+          <span key={k} className={`px-2 py-1 rounded text-xs font-medium ${badgeClass(k)}`}>
+            {k} {v}
           </span>
         ))}
       </div>
 
-      {/* TABLEAU PRINCIPAL */}
-      <div className="overflow-x-auto border rounded shadow-sm">
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-100">
-            <tr>
+      {/* Table */}
+      <div className="border rounded-lg overflow-auto bg-white">
+        <table className="min-w-[1100px] w-full text-sm">
+          <thead className="bg-gray-50">
+            <tr className="text-left">
               <th className="px-3 py-2">OT</th>
               <th className="px-3 py-2">ND</th>
               <th className="px-3 py-2">Activité</th>
               <th className="px-3 py-2">Produit</th>
-              <th className="px-3 py-2">Code cible</th>
-              <th className="px-3 py-2">Clôture</th>
               <th className="px-3 py-2">Règle</th>
               <th className="px-3 py-2">Statut final</th>
               <th className="px-3 py-2">Croisement</th>
               <th className="px-3 py-2">Praxedo</th>
               <th className="px-3 py-2">PIDI</th>
-              <th className="px-3 py-2">Articles</th>
               <th className="px-3 py-2">Planifiée</th>
             </tr>
           </thead>
-
           <tbody>
-            {items.map((d) => (
-              <tr key={d.key_match} className="border-t hover:bg-gray-50">
-                <td className="px-3 py-2 font-mono">{d.ot_key ?? "—"}</td>
-                <td className="px-3 py-2 font-mono">{d.nd_global ?? "—"}</td>
-
-                <td className="px-3 py-2">{d.activite_code ?? "—"}</td>
-                <td className="px-3 py-2">{d.produit_code ?? "—"}</td>
-                <td className="px-3 py-2">{d.code_cible ?? "—"}</td>
-
-                <td className="px-3 py-2">
-                  <ClotureBadge
-                    label={d.code_cloture_code}
-                    ok={d.cloture_facturable ?? false}
-                  />
-                </td>
-
-                <td className="px-3 py-2">
-                  {d.regle_code ? (
-                    <>
-                      <span className="font-mono">{d.regle_code}</span>
-                      {d.libelle_regle ? ` – ${d.libelle_regle}` : ""}
-                    </>
-                  ) : (
-                    "—"
-                  )}
-                </td>
-
-                <td className="px-3 py-2">
-                  <StatutFinalBadge value={d.statut_final} />
-                </td>
-
-                <td className="px-3 py-2">
-                  <CroisementBadge value={d.statut_croisement} />
-                </td>
-
-                <td className="px-3 py-2">
-                  <PraxedoBadge value={d.statut_praxedo} />
-                </td>
-
-                <td className="px-3 py-2 text-purple-700 font-medium">
-                  {d.statut_pidi ?? "—"}
-                </td>
-
-                <td className="px-3 py-2">
-                  <button
-                    onClick={() =>
-                      setVerification({ open: true, dossier: d })
-                    }
-                    className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
-                  >
-                    Vérifier
-                  </button>
-                </td>
-
-                <td className="px-3 py-2">
-                  {d.date_planifiee
-                    ? new Date(d.date_planifiee).toLocaleString("fr-FR")
-                    : "—"}
+            {items.length === 0 ? (
+              <tr>
+                <td colSpan={10} className="px-3 py-10 text-center text-gray-500">
+                  Aucun dossier à afficher.
                 </td>
               </tr>
-            ))}
+            ) : (
+              items.map((d) => (
+                <tr key={d.key_match} className="border-t">
+                  <td className="px-3 py-2 font-mono">{d.ot_key ?? "—"}</td>
+                  <td className="px-3 py-2 font-mono">{d.nd_global ?? "—"}</td>
+                  <td className="px-3 py-2">{d.activite_code ?? "—"}</td>
+                  <td className="px-3 py-2">{d.produit_code ?? "—"}</td>
+                  <td className="px-3 py-2">{d.libelle_regle ?? "—"}</td>
+
+                  <td className="px-3 py-2">
+                    <span className={`px-2 py-1 rounded text-xs font-medium ${statutFinalClass(d.statut_final)}`}>
+                      {d.statut_final.replaceAll("_", " ")}
+                    </span>
+                  </td>
+
+                  <td className="px-3 py-2">
+                    <span className={`px-2 py-1 rounded text-xs font-medium ${badgeClass(croisementLabel(d.statut_croisement))}`}>
+                      {croisementLabel(d.statut_croisement)}
+                    </span>
+                  </td>
+
+                  <td className="px-3 py-2">{d.statut_praxedo ?? "—"}</td>
+                  <td className="px-3 py-2">{d.statut_pidi ?? "—"}</td>
+                  <td className="px-3 py-2">{d.date_planifiee ?? "—"}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -475,13 +235,6 @@ export default function DossiersList() {
           onClose={() => setImportType(null)}
         />
       )}
-
-      <VerificationModal
-        state={verification}
-        onClose={() =>
-          setVerification({ open: false, dossier: null })
-        }
-      />
     </div>
   );
 }

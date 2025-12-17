@@ -1,17 +1,11 @@
-// frontend/components/dossiers/filters-bar.tsx
 "use client";
 
 import { useState } from "react";
 import { Search, Filter } from "lucide-react";
-
 import type { StatutFinal, CroisementStatut } from "@/types/dossier";
 
 type Props = {
-  onSearch: (filters: {
-    q?: string;
-    statut?: StatutFinal;
-    croisement?: CroisementStatut;
-  }) => void;
+  onSearch: (filters: { q?: string; statut?: StatutFinal; croisement?: CroisementStatut }) => void;
   loading?: boolean;
   statuts: readonly StatutFinal[];
 };
@@ -31,15 +25,9 @@ export default function FiltersBar({ onSearch, loading, statuts }: Props) {
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="flex flex-wrap items-end gap-3 px-2 py-2"
-    >
-      {/* Recherche OT / ND */}
+    <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3 px-2 py-2">
       <div className="flex flex-col">
-        <label className="text-xs text-gray-600 mb-1">
-          Recherche (OT / ND)
-        </label>
+        <label className="text-xs text-gray-600 mb-1">Recherche (OT / ND)</label>
         <div className="flex items-center border rounded px-2 py-1 bg-white">
           <Search className="h-4 w-4 text-gray-400 mr-1" />
           <input
@@ -52,45 +40,37 @@ export default function FiltersBar({ onSearch, loading, statuts }: Props) {
         </div>
       </div>
 
-      {/* Statut final */}
       <div className="flex flex-col">
         <label className="text-xs text-gray-600 mb-1">Statut final</label>
         <select
           value={statut}
-          onChange={(e) =>
-            setStatut(e.target.value as StatutFinal | "")
-          }
+          onChange={(e) => setStatut(e.target.value as StatutFinal | "")}
           className="border rounded px-2 py-1 text-sm bg-white"
         >
           <option value="">Tous</option>
           {statuts.map((s) => (
             <option key={s} value={s}>
-              {s.replace("_", " ")}
+              {s.replaceAll("_", " ")}
             </option>
           ))}
         </select>
       </div>
 
-      {/* Croisement */}
       <div className="flex flex-col">
         <label className="text-xs text-gray-600 mb-1">Croisement</label>
         <select
           value={croisement}
-          onChange={(e) =>
-            setCroisement(e.target.value as CroisementStatut | "")
-          }
+          onChange={(e) => setCroisement(e.target.value as CroisementStatut | "")}
           className="border rounded px-2 py-1 text-sm bg-white"
         >
           <option value="">Tous</option>
           <option value="OK">OK</option>
-          <option value="ABSENT_PRAXEDO">ABSENT PRAXEDO</option>
-          <option value="ABSENT_PIDI">ABSENT PIDI</option>
-          <option value="NON_ENVOYE_PIDI">NON ENVOYE PIDI</option>
-          <option value="INCONNU">INCONNU</option>
+          <option value="Praxedo_only">ABSENT PIDI</option>
+          <option value="PIDI_only">ABSENT PRAXEDO</option>
+          <option value="UNKNOWN">UNKNOWN</option>
         </select>
       </div>
 
-      {/* Bouton Filtrer */}
       <div className="flex flex-col">
         <span className="text-xs text-transparent mb-1">.</span>
         <button

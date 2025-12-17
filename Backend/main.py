@@ -1,30 +1,24 @@
-# Backend/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from core.config import get_settings
-from routes.health import router as health_router
+from routes.croisement_routes import router as croisement_router
 from routes.dossiers import router as dossiers_router
-from routes.imports import router as import_router
-from routes.croisement import router as croisement_router  # جديد
+from routes.imports import router as imports_router
 
-settings = get_settings()
-
-app = FastAPI(title="Kyntus Facturation API", version="1.0")
+app = FastAPI(title="Kyntus Facturation API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.CORS_ORIGINS.split(",")],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(health_router)
+app.include_router(croisement_router)
 app.include_router(dossiers_router)
-app.include_router(import_router)
-app.include_router(croisement_router)  # endpoint /api/croisement
+app.include_router(imports_router)
 
 @app.get("/")
 def root():
-    return {"message": "API Kyntus Facturation opérationnelle ✅"}
+    return {"status": "ok"}

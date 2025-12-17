@@ -1,118 +1,210 @@
-# Backend/routes/imports.py
-
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from datetime import datetime
-from io import TextIOWrapper, StringIO  # ✅ AJOUT DE L'IMPORT
-import csv
+from sqlalchemy import text
+from datetime import datetime, timezone
+import csv, io, uuid, re, unicodedata
+from io import TextIOWrapper
+
 
 from database.connection import get_db
-from models.raw import RawPraxedo, RawPidi
+from models.raw_praxedo import RawPraxedo
+from models.raw_pidi import RawPidi
 
-router = APIRouter(prefix="/api/import", tags=["imports"])
+router = APIRouter(prefix="/api/import", tags=["import"])
 
 
-# --------------------- UTILS ---------------------
+def norm_header(s: str) -> str:
+    s = (s or "").replace("\ufeff", "").strip().lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = s.replace("’", "'")
+    s = re.sub(r"\s+", "_", s)
+    s = re.sub(r"[^a-z0-9_]+", "_", s)
+    return s.strip("_")
 
-def _decode_file(file: UploadFile) -> StringIO:
-    """
-    Convertit le UploadFile en flux texte UTF-8 pour csv.reader
-    """
-    content = file.file.read()
+
+# Mapping “headers CSV normalisés” -> “colonne DB”
+PRAXEDO_MAP = {
+    "numero": "numero",
+    "ot": "numero",
+    "numero_ot": "numero",
+    "nd": "nd",
+    "nd_global": "nd",
+    "act_prod": "act_prod",
+    "activite": "act_prod",
+    "activite_code": "act_prod",
+    "code_intervenant": "code_intervenant",
+    "cp": "cp",
+    "code_postal": "cp",
+    "ville_site": "ville_site",
+    "ville": "ville_site",
+    "statut": "statut",
+    "planifiee": "planifiee",
+    "date_planifiee": "planifiee",
+    "nom_technicien": "nom_technicien",
+    "prenom_technicien": "prenom_technicien",
+    "equipiers": "equipiers",
+}
+
+PIDI_MAP = {
+    "numero_flux_pidi": "numero_flux_pidi",
+    "flux_pidi": "numero_flux_pidi",
+    "contrat": "contrat",
+    "type_pidi": "type_pidi",
+    "statut": "statut",
+    "nd": "nd",
+    "code_secteur": "code_secteur",
+    "numero_ot": "numero_ot",
+    "numero_att": "numero_att",
+    "oeie": "oeie",
+    "code_gestion_chantier": "code_gestion_chantier",
+    "agence": "agence",
+    "liste_articles": "liste_articles",
+}
+
+
+def map_row(row: dict, table_name: str, valid_cols: set[str]) -> dict:
+    mapping = PRAXEDO_MAP if table_name == "praxedo" else PIDI_MAP
+    out = {}
+    for k, v in row.items():
+        nk = norm_header(k)
+        col = mapping.get(nk, nk)  # si header == colonne DB, ça passe direct
+        if col in valid_cols:
+            out[col] = v
+    return out
+
+
+def sniff_delimiter(sample: str) -> str:
     try:
-        text = content.decode("utf-8")
-    except UnicodeDecodeError:
-        text = content.decode("latin-1")
-    return StringIO(text)
+        dialect = csv.Sniffer().sniff(sample, delimiters=";,|\t")
+        return dialect.delimiter
+    except Exception:
+        return ";"  # fallback FR
 
 
-# --------------------- IMPORT PRAXEDO ---------------------
-@router.post("/praxedo")
-async def import_praxedo(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
-    """Import d'un CSV Praxedo dans raw.praxedo"""
-    
-    if not file.filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Le fichier doit être un CSV")
+async def insert_csv_into_raw(
+    table_name: str,
+    file: UploadFile,
+    delimiter: str,
+    session: Session,
+) -> tuple[int, int]:
+    content = await file.read()
+    decoded = content.decode("utf-8-sig", errors="ignore")  # utf-8-sig gère BOM
 
-    buffer = _decode_file(file)
-    reader = csv.DictReader(buffer, delimiter=";")
+    if delimiter == "auto":
+        delimiter = sniff_delimiter(decoded[:5000])
 
-    # ⚠️ NE PAS VIDER LA TABLE si 'numero' est la clé primaire
-    # db.query(RawPraxedo).delete()  # ❌ Commenté
+    reader = csv.DictReader(io.StringIO(decoded), delimiter=delimiter)
+    if not reader.fieldnames:
+        return (0, 0)
 
-    count = 0
-    errors = 0
-    now = datetime.utcnow()
+    # Colonnes réelles de la table
+    cols_query = text("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema='raw' AND table_name=:table_name
+    """)
+    valid_cols = set(
+        r[0] for r in session.execute(cols_query, {"table_name": table_name}).fetchall()
+    )
+
+    ok, ko = 0, 0
+    now_utc = datetime.now(timezone.utc)
 
     for row in reader:
+        data = map_row(row, table_name, valid_cols)
+
+        # Skip lignes réellement vides
+        if not any((str(v).strip() if v is not None else "") for v in data.values()):
+            continue
+
+        if "imported_at" in valid_cols:
+            data["imported_at"] = now_utc
+
+        if not data:
+            continue
+
+        cols = ", ".join(f'"{c}"' for c in data.keys())
+        vals = ", ".join(f":{c}" for c in data.keys())
+
+        # Evite crash si doublon de PK
+        stmt = text(f'INSERT INTO raw.{table_name} ({cols}) VALUES ({vals}) ON CONFLICT DO NOTHING')
+
         try:
-            # ✅ Utiliser merge() au lieu de add() pour éviter les doublons
-            obj = RawPraxedo(
-                numero=row.get("numero") or row.get("numero_ot") or "",
-                statut=row.get("statut") or "",
-                planifiee=row.get("planifiee") or None,
-                nom_technicien=row.get("nom_technicien") or "",
-                prenom_technicien=row.get("prenom_technicien") or "",
-                equipiers=row.get("equipiers") or "",
-                nd=row.get("nd") or "",
-                act_prod=row.get("act_prod") or "",
-                code_intervenant=row.get("code_intervenant") or "",
-                cp=row.get("cp") or "",
-                ville_site=row.get("ville_site") or "",
-                imported_at=now,
-            )
-            db.merge(obj)  # ✅ merge au lieu de add
-            count += 1
+            # savepoint par ligne
+            with session.begin_nested():
+                session.execute(stmt, data)
+            ok += 1
         except Exception as e:
-            errors += 1
-            print(f"Error importing row: {e}")
+            ko += 1
+            print(f"❌ Insert KO {table_name}: {e} | DATA={data}")
 
-    db.commit()
-    return {"status": "ok", "rows_inserted": count, "errors": errors}
+    session.commit()
+    return ok, ko
 
-# --------------------- IMPORT PIDI ---------------------
+
+@router.post("/praxedo")
+def import_praxedo(
+    file: UploadFile = File(...),
+    delimiter: str = Query(";", pattern="^[,;]$"),
+    db: Session = Depends(get_db),
+):
+    try:
+        wrapper = TextIOWrapper(file.file, encoding="utf-8", errors="replace")
+        reader = csv.DictReader(wrapper, delimiter=delimiter)
+
+        rows = 0
+        for r in reader:
+            rows += 1
+            obj = RawPraxedo(
+                numero=(r.get("numero") or r.get("Numéro") or r.get("NUMERO") or "").strip() or None,
+                statut=(r.get("statut") or "").strip() or None,
+                planifiee=None,
+                nom_technicien=(r.get("nom_technicien") or "").strip() or None,
+                prenom_technicien=(r.get("prenom_technicien") or "").strip() or None,
+                equipiers=(r.get("equipiers") or "").strip() or None,
+                nd=(r.get("nd") or "").strip() or None,
+                act_prod=(r.get("act_prod") or "").strip() or None,
+                code_intervenant=(r.get("code_intervenant") or "").strip() or None,
+                cp=(r.get("cp") or "").strip() or None,
+                ville_site=(r.get("ville_site") or "").strip() or None,
+                imported_at=datetime.utcnow(),
+            )
+            db.merge(obj)
+
+        db.commit()
+        return {"rows": rows}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 @router.post("/pidi")
-async def import_pidi(
+def import_pidi(
     file: UploadFile = File(...),
+    delimiter: str = Query(";", pattern="^[,;]$"),
     db: Session = Depends(get_db),
 ):
-    """
-    Import d'un CSV PIDI dans raw.pidi
-    """
-    if not file.filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Le fichier doit être un CSV")
+    try:
+        wrapper = TextIOWrapper(file.file, encoding="utf-8", errors="replace")
+        reader = csv.DictReader(wrapper, delimiter=delimiter)
 
-    buffer = _decode_file(file)
-    reader = csv.DictReader(buffer, delimiter=";")
+        rows = 0
+        for r in reader:
+            rows += 1
+            obj = RawPidi(
+                numero_ot=(r.get("numero_ot") or r.get("ot_key") or "").strip() or None,
+                nd=(r.get("nd") or "").strip() or None,
+                statut=(r.get("statut") or "").strip() or None,
+                numero_att=(r.get("numero_att") or "").strip() or None,
+                liste_articles=(r.get("liste_articles") or "").strip() or None,
+                imported_at=datetime.utcnow(),
+            )
+            db.merge(obj)
 
-    # Vider la table
-    db.query(RawPidi).delete()
-
-    count = 0
-    now = datetime.utcnow()
-
-    for row in reader:
-        obj = RawPidi(
-            contrat=row.get("contrat") or row.get("CONTRAT"),
-            numero_flux_pidi=row.get("numero_flux_pidi") or row.get("NUMERO_FLUX_PIDI"),
-            type_pidi=row.get("type_pidi") or row.get("TYPE_PIDI"),
-            statut=row.get("statut") or row.get("STATUT"),
-            nd=row.get("nd") or row.get("ND"),
-            code_secteur=row.get("code_secteur") or row.get("CODE_SECTEUR"),
-            numero_ot=row.get("numero_ot") or row.get("NUMERO_OT"),
-            numero_att=row.get("numero_att") or row.get("NUMERO_ATT"),
-            oeie=row.get("oeie") or row.get("OEIE"),
-            code_gestion_chantier=row.get("code_gestion_chantier") or row.get("CODE_GESTION_CHANTIER"),
-            agence=row.get("agence") or row.get("AGENCE"),
-            liste_articles=row.get("liste_articles") or row.get("LISTE_ARTICLES"),
-            imported_at=now,
-        )
-        db.add(obj)
-        count += 1
-
-    db.commit()
-    return {"status": "ok", "rows_inserted": count}
+        db.commit()
+        return {"rows": rows}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))

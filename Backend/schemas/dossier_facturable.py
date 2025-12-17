@@ -1,32 +1,25 @@
-# Backend/schemas/dossier_facturable.py
-
+from pydantic import BaseModel
 from typing import Optional, List, Any
 from datetime import datetime
-
-from pydantic import BaseModel
-
 
 class DossierFacturable(BaseModel):
     key_match: Optional[str]
 
-    # Croisement
     ot_key: Optional[str]
     nd_global: Optional[str]
     statut_croisement: Optional[str]
 
-    # Praxedo
     praxedo_ot_key: Optional[str]
     praxedo_nd: Optional[str]
     activite_code: Optional[str]
     produit_code: Optional[str]
     code_cloture_code: Optional[str]
     statut_praxedo: Optional[str]
-    date_planifiee: Optional[datetime]
+    date_planifiee: Optional[str]     # ✅ text
     date_cloture: Optional[datetime]
     technicien: Optional[str]
     commentaire_praxedo: Optional[str]
 
-    # PIDI
     statut_pidi: Optional[str]
     code_cible: Optional[str]
     pidi_date_creation: Optional[datetime]
@@ -34,7 +27,6 @@ class DossierFacturable(BaseModel):
     liste_articles: Optional[str]
     commentaire_pidi: Optional[str]
 
-    # Règles
     regle_code: Optional[str]
     libelle_regle: Optional[str]
     condition_sql: Optional[str]
@@ -52,13 +44,11 @@ class DossierFacturable(BaseModel):
     code_chantier_generique: Optional[str]
     categorie: Optional[str]
 
-    # Articles
     statut_articles: Optional[str]
 
-    # Final
     statut_final: Optional[str]
     cloture_facturable: Optional[bool]
     generated_at: Optional[datetime]
 
     class Config:
-        orm_mode = True
+        from_attributes = True
