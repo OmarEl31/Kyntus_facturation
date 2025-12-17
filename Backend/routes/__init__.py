@@ -19,4 +19,4 @@ app.include_router(imports_router)
 
 @app.get("/")
 def root():
-    return {"ok": True}
+    return {"status": "ok"}

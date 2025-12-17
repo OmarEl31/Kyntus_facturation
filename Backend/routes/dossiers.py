@@ -25,8 +25,10 @@ def list_dossiers(
                 VDossierFacturable.nd_global.ilike(like),
             )
         )
+
     if statut:
         query = query.filter(VDossierFacturable.statut_final == statut)
+
     if croisement:
         query = query.filter(VDossierFacturable.statut_croisement == croisement)
 

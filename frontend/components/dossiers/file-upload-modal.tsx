@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { importCsv } from "@/services/dossiersApi";
 
-/** Taille max 25 Mo */
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 
 type Props = {
@@ -11,6 +9,8 @@ type Props = {
   onClose: () => void;
   onImported?: () => void;
 };
+
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
 export default function FileUploadModal({ type, onClose, onImported }: Props) {
   const [file, setFile] = useState<File | null>(null);
@@ -28,11 +28,11 @@ export default function FileUploadModal({ type, onClose, onImported }: Props) {
         const sc = (firstLine.match(/;/g) || []).length;
         const cm = (firstLine.match(/,/g) || []).length;
         if (sc > cm) setDelimiter(";"); else if (cm > sc) setDelimiter(",");
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     })();
   }, [file]);
+
+  const endpoint = type === "PRAXEDO" ? "/api/import/praxedo" : "/api/import/pidi";
 
   async function handleUpload() {
     setErrorMsg(null);
@@ -42,18 +42,39 @@ export default function FileUploadModal({ type, onClose, onImported }: Props) {
       if (!/\.csv$|\.txt$/i.test(file.name)) throw new Error("Format invalide (CSV/TXT).");
       if (file.size > MAX_FILE_SIZE) throw new Error("Fichier trop volumineux (max 25 Mo).");
 
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("delimiter", delimiter);
+
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      const timeout = setTimeout(() => ctrl.abort(), 90_000);
+
       setLoading(true);
+      const res = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        body: fd,
+        signal: ctrl.signal,
+      }).finally(() => clearTimeout(timeout));
 
-      // ✅ appel unique vers le backend (même base URL que list)
-      const data = await importCsv(type, file, delimiter);
+      if (!res.ok) {
+        let detail = await res.text();
+        try {
+          const j = JSON.parse(detail);
+          detail = j?.detail ? JSON.stringify(j.detail) : detail;
+        } catch {}
+        throw new Error(detail || `Erreur HTTP ${res.status}`);
+      }
 
-      const rows = typeof (data as any)?.rows === "number" ? (data as any).rows : "—";
+      const data = await res.json().catch(() => ({}));
+      const rows = typeof data?.rows === "number" ? data.rows : "—";
       alert(`✅ Import ${type} réussi (${rows} lignes).`);
 
       onImported?.();
       onClose();
     } catch (e: any) {
-      setErrorMsg(e?.message || "Échec d’import.");
+      if (e?.name === "AbortError") setErrorMsg("La requête a expiré. Réessayez.");
+      else setErrorMsg(e?.message || "Échec d’import.");
     } finally {
       setLoading(false);
       abortRef.current = null;
@@ -69,7 +90,9 @@ export default function FileUploadModal({ type, onClose, onImported }: Props) {
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-lg shadow-lg w-full max-w-lg p-6 space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Importer {type === "PRAXEDO" ? "Praxedo" : "PIDI"}</h2>
+          <h2 className="text-lg font-semibold">
+            Importer {type === "PRAXEDO" ? "Praxedo" : "PIDI"}
+          </h2>
           <button onClick={cancel} className="text-gray-500 hover:text-gray-700" aria-label="Fermer">✕</button>
         </div>
 
@@ -111,11 +134,7 @@ export default function FileUploadModal({ type, onClose, onImported }: Props) {
           <button onClick={cancel} className="border rounded px-3 py-2 hover:bg-gray-50" disabled={loading}>
             Annuler
           </button>
-          <button
-            onClick={handleUpload}
-            className="bg-blue-600 text-white rounded px-3 py-2 hover:bg-blue-700 disabled:opacity-50"
-            disabled={loading || !file}
-          >
+          <button onClick={handleUpload} className="bg-blue-600 text-white rounded px-3 py-2 hover:bg-blue-700 disabled:opacity-50" disabled={loading || !file}>
             {loading ? "Importation…" : "Importer"}
           </button>
         </div>
