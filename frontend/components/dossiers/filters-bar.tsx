@@ -1,5 +1,4 @@
 "use client";
-
 import { useState } from "react";
 import { Search, Filter } from "lucide-react";
 import type { StatutFinal, CroisementStatut } from "@/types/dossier";
@@ -31,7 +30,6 @@ export default function FiltersBar({ onSearch, loading, statuts }: Props) {
         <div className="flex items-center border rounded px-2 py-1 bg-white">
           <Search className="h-4 w-4 text-gray-400 mr-1" />
           <input
-            type="text"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             className="outline-none text-sm flex-1"
@@ -49,9 +47,7 @@ export default function FiltersBar({ onSearch, loading, statuts }: Props) {
         >
           <option value="">Tous</option>
           {statuts.map((s) => (
-            <option key={s} value={s}>
-              {s.replaceAll("_", " ")}
-            </option>
+            <option key={s} value={s}>{s.replace("_", " ")}</option>
           ))}
         </select>
       </div>
@@ -65,9 +61,9 @@ export default function FiltersBar({ onSearch, loading, statuts }: Props) {
         >
           <option value="">Tous</option>
           <option value="OK">OK</option>
-          <option value="Praxedo_only">ABSENT PIDI</option>
-          <option value="PIDI_only">ABSENT PRAXEDO</option>
-          <option value="UNKNOWN">UNKNOWN</option>
+          <option value="ABSENT_PRAXEDO">ABSENT PRAXEDO</option>
+          <option value="ABSENT_PIDI">ABSENT PIDI</option>
+          <option value="INCONNU">INCONNU</option>
         </select>
       </div>
 
@@ -78,8 +74,7 @@ export default function FiltersBar({ onSearch, loading, statuts }: Props) {
           disabled={loading}
           className="inline-flex items-center gap-1 px-3 py-1.5 rounded bg-gray-800 text-white text-sm hover:bg-gray-900 disabled:opacity-60"
         >
-          <Filter className="h-4 w-4" />
-          Filtrer
+          <Filter className="h-4 w-4" /> Filtrer
         </button>
       </div>
     </form>

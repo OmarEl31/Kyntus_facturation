@@ -1,18 +1,9 @@
-export type StatutFinal =
-  | "FACTURABLE"
-  | "CONDITIONNEL"
-  | "NON_FACTURABLE"
-  | "A_VERIFIER";
+export type StatutFinal = "FACTURABLE" | "CONDITIONNEL" | "NON_FACTURABLE" | "A_VERIFIER";
 
-export type CroisementStatut =
-  | "OK"
-  | "PIDI_only"
-  | "Praxedo_only"
-  | "UNKNOWN";
+export type CroisementStatut = "OK" | "ABSENT_PRAXEDO" | "ABSENT_PIDI" | "INCONNU";
 
 export interface DossierFacturable {
   key_match: string;
-
   ot_key: string | null;
   nd_global: string | null;
   statut_croisement: CroisementStatut | null;
@@ -23,8 +14,8 @@ export interface DossierFacturable {
   produit_code: string | null;
   code_cloture_code: string | null;
   statut_praxedo: string | null;
-  date_planifiee: string | null; // ISO
-  date_cloture: string | null;   // ISO
+  date_planifiee: string | null;
+  date_cloture: string | null;
   technicien: string | null;
   commentaire_praxedo: string | null;
 
@@ -53,14 +44,7 @@ export interface DossierFacturable {
   categorie: string | null;
 
   statut_articles: string | null;
-
   statut_final: StatutFinal;
   cloture_facturable: boolean | null;
   generated_at: string | null;
-}
-
-export interface DossiersFilters {
-  q?: string;
-  statut?: StatutFinal;
-  croisement?: CroisementStatut;
 }

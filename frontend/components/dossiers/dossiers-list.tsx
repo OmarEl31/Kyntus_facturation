@@ -18,25 +18,22 @@ export default function DossiersList() {
   const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | null>(null);
   const [exporting, setExporting] = useState(false);
 
-  const load = useCallback(
-    async (f?: DossiersFilters) => {
-      const activeFilters = f ?? filters;
-      setLoading(true);
-      setError(null);
-      try {
-        const data = await listDossiers(activeFilters);
-        setItems(data);
-        if (f) setFilters(f);
-      } catch (e: any) {
-        console.error(e);
-        setItems([]);
-        setError(e?.message || "Erreur lors du chargement des dossiers.");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [filters]
-  );
+  const load = useCallback(async (f?: DossiersFilters) => {
+  const activeFilters = f ?? filters;
+  setLoading(true);
+  setError(null);
+  try {
+    const data = await listDossiers(activeFilters);
+    setItems(data);
+    if (f) setFilters(f);
+  } catch (e: any) {
+    setItems([]);
+    setError(e?.message || "Erreur inconnue");
+  } finally {
+    setLoading(false);
+  }
+}, [filters]
+);
 
   useEffect(() => {
     load();
@@ -97,6 +94,11 @@ export default function DossiersList() {
         loading={loading}
         statuts={statutsFinal}
       />
+{error && (
+  <div className="mx-2 p-2 rounded border border-red-200 bg-red-50 text-sm text-red-700">
+    {error}
+  </div>
+)}
 
       {/* Actions */}
       <div className="flex items-center justify-between px-2">

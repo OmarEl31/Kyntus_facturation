@@ -1,14 +1,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from core.config import get_settings
 from routes.dossiers import router as dossiers_router
 from routes.imports import router as imports_router
 
 app = FastAPI(title="Kyntus Facturation API")
+settings = get_settings()
+
+origins = [o.strip() for o in settings.CORS_ORIGINS.split(",")] if settings.CORS_ORIGINS else ["*"]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins if origins != ["*"] else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -19,4 +23,4 @@ app.include_router(imports_router)
 
 @app.get("/")
 def root():
-    return {"ok": True}
+    return {"status": "ok"}
