@@ -1,3 +1,4 @@
+// frontend/components/dossiers/dossiers-list.tsx
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -10,7 +11,7 @@ import type { DossiersFilters } from "@/services/dossiersApi";
 import FiltersBar from "./filters-bar";
 import FileUploadModal from "./file-upload-modal";
 
-type BadgeKind = "green" | "yellow" | "red" | "gray" | "purple" | "blue";
+type BadgeKind = "green" | "yellow" | "red" | "gray" | "purple" | "blue" | "orange";
 
 function badgeClass(kind: BadgeKind) {
   switch (kind) {
@@ -24,6 +25,8 @@ function badgeClass(kind: BadgeKind) {
       return "bg-purple-100 text-purple-700";
     case "blue":
       return "bg-blue-100 text-blue-700";
+    case "orange":
+      return "bg-orange-100 text-orange-800";
     default:
       return "bg-gray-100 text-gray-700";
   }
@@ -62,7 +65,7 @@ function statutFinalKind(s?: string | null): BadgeKind {
   if (s === "FACTURABLE") return "green";
   if (s === "NON_FACTURABLE") return "red";
   if (s === "CONDITIONNEL") return "yellow";
-  if (s === "A_VERIFIER") return "purple";
+  if (s === "A_VERIFIER") return "orange";
   return "gray";
 }
 

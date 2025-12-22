@@ -1,3 +1,4 @@
+// frontend/services/dossiersApi.ts
 import type { DossierFacturable, StatutFinal, CroisementStatut } from "@/types/dossier";
 
 export type DossiersFilters = {

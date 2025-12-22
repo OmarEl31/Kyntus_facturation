@@ -1,3 +1,4 @@
+# Backend/models/dossiers_facturable.py
 from sqlalchemy import Column, Text, Boolean, TIMESTAMP
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from database.connection import Base
