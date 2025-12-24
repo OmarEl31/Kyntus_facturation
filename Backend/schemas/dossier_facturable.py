@@ -1,3 +1,4 @@
+# Backend/schemas/dossier_facturable.py
 from pydantic import BaseModel
 from typing import Optional, List, Any
 from datetime import datetime
@@ -30,6 +31,7 @@ class DossierFacturable(BaseModel):
     regle_code: Optional[str]
     libelle_regle: Optional[str]
     condition_sql: Optional[str]
+    condition_json: Optional[Any]
     statut_facturation: Optional[str]
     codes_cloture_facturables: Optional[List[str]]
     type_branchement: Optional[Any]

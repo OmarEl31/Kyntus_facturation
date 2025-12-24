@@ -34,6 +34,7 @@ class VDossierFacturable(Base):
     regle_code = Column(Text)
     libelle_regle = Column(Text)
     condition_sql = Column(Text)
+    condition_json = Column(JSONB)
     statut_facturation = Column(Text)
     codes_cloture_facturables = Column(ARRAY(Text))
     type_branchement = Column(JSONB)

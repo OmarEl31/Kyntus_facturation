@@ -1,11 +1,13 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict, Any
+
 
 class RegleFacturationOut(BaseModel):
     id: int
     code: str
     libelle: Optional[str] = None
     condition_sql: Optional[str] = None
+    condition_json: Optional[Dict[str, Any]] = None  # ✅ AJOUT LECTURE
     statut_facturation: Optional[str] = None
 
     # ✅ pour les tags
@@ -21,6 +23,7 @@ class RegleFacturationCreate(BaseModel):
     code: str
     libelle: Optional[str] = None
     condition_sql: Optional[str] = None
+    condition_json: Optional[Dict[str, Any]] = None
     statut_facturation: Optional[str] = None
 
     code_activite: Optional[str] = None
@@ -33,6 +36,7 @@ class RegleFacturationUpdate(BaseModel):
     code: Optional[str] = None
     libelle: Optional[str] = None
     condition_sql: Optional[str] = None
+    condition_json: Optional[Dict[str, Any]] = None
     statut_facturation: Optional[str] = None
 
     code_activite: Optional[str] = None

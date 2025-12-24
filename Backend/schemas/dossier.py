@@ -11,7 +11,7 @@ class DossierOut(BaseModel):
     statut_attachement: Optional[str] = None
     date_planifiee: Optional[datetime] = None
     statut_croisement: str
-
+    condition_json: dict | None
 class PageOut(BaseModel):
     items: list[DossierOut]
     total: int

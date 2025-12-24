@@ -33,3 +33,4 @@ def list_dossiers(
         query = query.filter(VDossierFacturable.statut_croisement == croisement)
 
     return query.order_by(VDossierFacturable.generated_at.desc()).all()
+
