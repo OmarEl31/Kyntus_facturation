@@ -16,7 +16,7 @@ class DossierFacturable(BaseModel):
     produit_code: Optional[str]
     code_cloture_code: Optional[str]
     statut_praxedo: Optional[str]
-    date_planifiee: Optional[str]     # ✅ text
+    date_planifiee: Optional[str]
     date_cloture: Optional[datetime]
     technicien: Optional[str]
     commentaire_praxedo: Optional[str]
@@ -51,6 +51,19 @@ class DossierFacturable(BaseModel):
     statut_final: Optional[str]
     cloture_facturable: Optional[bool]
     generated_at: Optional[datetime]
+
+    # ✅ Terrain
+    desc_site: Optional[str]
+    description: Optional[str]
+    type_site_terrain: Optional[str]
+    type_pbo_terrain: Optional[str]
+    mode_passage: Optional[str]
+    article_facturation_propose: Optional[str]
+    statut_article: Optional[str]
+
+    # ✅ Nouveau : contrôle terrain vs règle
+    regle_articles_attendus: Optional[Any]
+    statut_article_vs_regle: Optional[str]
 
     class Config:
         from_attributes = True

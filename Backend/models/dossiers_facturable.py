@@ -54,3 +54,16 @@ class VDossierFacturable(Base):
     statut_final = Column(Text)
     cloture_facturable = Column(Boolean)
     generated_at = Column(TIMESTAMP)
+
+    # ✅ Terrain (depuis PRAX / desc_site & description)
+    desc_site = Column(Text)
+    description = Column(Text)
+    type_site_terrain = Column(Text)
+    type_pbo_terrain = Column(Text)
+    mode_passage = Column(Text)
+    article_facturation_propose = Column(Text)
+    statut_article = Column(Text)
+
+    # ✅ Nouveau : contrôle terrain vs règle
+    regle_articles_attendus = Column(JSONB)
+    statut_article_vs_regle = Column(Text)

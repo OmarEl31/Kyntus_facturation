@@ -37,6 +37,27 @@ def _val(h: dict, *keys: str):
             return str(v).strip()
     return None
 
+def _fix_mojibake(s: str | None) -> str | None:
+    """
+    Répare le cas fréquent où du UTF-8 a été interprété comme latin1/cp1252.
+    Exemple: "SociÃ©tÃ©" => "Société"
+    """
+    if not s:
+        return s
+    t = str(s)
+    # heuristique simple : présence de Ã ou Â
+    if ("Ã" in t) or ("Â" in t):
+        try:
+            return t.encode("latin1", errors="ignore").decode("utf-8", errors="ignore")
+        except Exception:
+            return t
+    return t
+
+def _clean_text(s: str | None) -> str | None:
+    if s is None:
+        return None
+    return _fix_mojibake(str(s).strip()) or None
+
 def _guess_cloture(h: dict) -> str | None:
     """
     Essaie de retrouver le code clôture (DMS/DEF/...) même si le header change.
@@ -135,7 +156,7 @@ async def import_praxedo(
         eff_delim = _detect_delimiter(file, delimiter)
 
         # utf-8-sig => gère BOM proprement
-        text = TextIOWrapper(file.file, encoding="utf-8-sig", errors="ignore")
+        text = TextIOWrapper(file.file, encoding="utf-8-sig", errors="ignore", newline="")
         reader = csv.DictReader(text, delimiter=eff_delim)
 
         # ✅ Debug utile (à laisser le temps de valider puis tu peux enlever)
@@ -159,8 +180,9 @@ async def import_praxedo(
                 numero=numero,
                 statut=_val(h, "statut"),
                 planifiee=_val(h, "planifiee", "planifiee_au", "date_planifiee"),
-                nom_technicien=_val(h, "nom_technicien", "nom"),
+                nom_technicien=_val(h, "nom_technicien", "nom", "technicien"),
                 prenom_technicien=_val(h, "prenom_technicien", "prenom"),
+
                 equipiers=_val(h, "equipiers"),
                 nd=_val(h, "nd"),
                 act_prod=_val(h, "act_prod", "act_prod_", "activite_produit", "act_prod_code"),
@@ -171,6 +193,12 @@ async def import_praxedo(
 
                 cp=_val(h, "cp"),
                 ville_site=_val(h, "ville_site", "ville"),
+
+                desc_site=_clean_text(_val(h, "desc_site", "infos_site")),
+                description=_clean_text(_val(h, "description")),
+
+
+
                 imported_at=now,
             )
 
