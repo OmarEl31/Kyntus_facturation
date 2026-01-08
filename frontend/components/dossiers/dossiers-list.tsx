@@ -1,8 +1,7 @@
-// frontend/components/dossiers/dossiers-list.tsx
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCw, Upload, Download, X } from "lucide-react";
+import { RefreshCw, Upload, Download, X, ChevronRight, Info } from "lucide-react";
 
 import { listDossiers, statutsFinal } from "@/services/dossiersApi";
 import type { DossierFacturable } from "@/types/dossier";
@@ -42,12 +41,10 @@ function Badge({ txt, kind = "gray" }: { txt: string; kind?: BadgeKind }) {
 
 function formatFrDate(v?: string | null) {
   if (!v) return "—";
-  // si c’est déjà "dd/mm/yyyy hh:mm" on renvoie tel quel
   if (/^\d{2}\/\d{2}\/\d{4}/.test(v)) return v;
 
-  // ISO -> dd/mm/yyyy hh:mm
   const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return v; // fallback brut
+  if (Number.isNaN(d.getTime())) return v;
 
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -56,7 +53,7 @@ function formatFrDate(v?: string | null) {
 function croisementKind(s?: string | null): BadgeKind {
   if (s === "OK") return "green";
   if (s === "ABSENT_PRAXEDO") return "yellow";
-  if (s === "ABSENT_PIDI") return "red"; // ✅ rouge
+  if (s === "ABSENT_PIDI") return "red";
   if (s === "INCONNU") return "gray";
   return "gray";
 }
@@ -69,29 +66,83 @@ function statutFinalKind(s?: string | null): BadgeKind {
   return "gray";
 }
 
-// ⚠️ Ajuste ce mapping si ton ancien tableau avait d'autres couleurs
 function clotureKind(code?: string | null): BadgeKind {
   if (!code) return "gray";
   const c = code.toUpperCase();
   if (c === "DMS") return "green";
-  if (c === "DEF") return "purple";
-  if (c === "RRC") return "purple";
-  if (c === "TSO") return "purple";
-  if (c === "PDC") return "purple";
+  if (["DEF", "RRC", "TSO", "PDC"].includes(c)) return "purple";
   return "blue";
 }
 
 function pidiLabel(d: DossierFacturable) {
-  // rendu "comme avant" :
-  // - null => Non envoyé à PIDI
-  // - sinon => Validé par PIDI (ou d.statut_pidi)
   if (!d.statut_pidi) return "Non envoyé à PIDI";
-  // si tu veux afficher le statut brut : return d.statut_pidi;
   return "Validé par PIDI";
 }
 
 function praxedoLabel(d: DossierFacturable) {
   return d.statut_praxedo ?? "—";
+}
+
+function terrainKind(mode?: string | null): BadgeKind {
+  const m = (mode ?? "").toUpperCase();
+  if (m.includes("SOUT")) return "blue";
+  if (m.includes("AER")) return "purple";
+  if (m.includes("IMM")) return "yellow";
+  return "gray";
+}
+
+function articleVsKind(s?: string | null): BadgeKind {
+  if (s === "OK") return "green";
+  if (s === "A_VERIFIER") return "orange";
+  if (s === "INCONNU") return "gray";
+  return "gray";
+}
+
+function parseCsvList(v?: string | null): string[] {
+  if (!v) return [];
+  return String(v)
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function uniq(arr: string[]) {
+  return Array.from(new Set(arr));
+}
+
+function computeArticleVerdict(proposed: string[], expected: string[]) {
+  // Règle : si attendus vide => INCONNU
+  if (expected.length === 0) return "INCONNU";
+
+  // Si tous les proposés "matchent" au moins un attendu par préfixe (LSIM1 match LSIM)
+  const ok = proposed.every((p) => expected.some((e) => p === e || p.startsWith(e)));
+  return ok ? "OK" : "A_VERIFIER";
+}
+
+function Chip({ txt }: { txt: string }) {
+  return (
+    <span className="inline-flex items-center rounded-full border bg-white px-2 py-1 text-xs font-medium text-gray-700">
+      {txt}
+    </span>
+  );
+}
+
+function SectionTitle({ title, right }: { title: string; right?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between">
+      <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+      {right}
+    </div>
+  );
+}
+
+function KeyValue({ k, v }: { k: string; v: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-3 gap-2 text-sm">
+      <div className="text-gray-500">{k}</div>
+      <div className="col-span-2 text-gray-900">{v}</div>
+    </div>
+  );
 }
 
 export default function DossiersList() {
@@ -102,9 +153,14 @@ export default function DossiersList() {
   const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | null>(null);
   const [exporting, setExporting] = useState(false);
 
-  // Modale Articles
+  // Modal Articles (comparaison)
   const [articlesOpen, setArticlesOpen] = useState(false);
   const [articlesTarget, setArticlesTarget] = useState<DossierFacturable | null>(null);
+
+  // Drawer détail
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selected, setSelected] = useState<DossierFacturable | null>(null);
+  const [showRawTerrain, setShowRawTerrain] = useState(false);
 
   const load = useCallback(
     async (f?: DossiersFilters) => {
@@ -130,10 +186,37 @@ export default function DossiersList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ESC to close modal/drawer
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        if (articlesOpen) {
+          setArticlesOpen(false);
+          setArticlesTarget(null);
+        } else if (drawerOpen) {
+          setDrawerOpen(false);
+          setSelected(null);
+          setShowRawTerrain(false);
+        }
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [articlesOpen, drawerOpen]);
+
   const countByCroisement = useMemo(() => {
     const m = new Map<string, number>();
     for (const it of items) {
       const k = it.statut_croisement ?? "INCONNU";
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
+  }, [items]);
+
+  const countByArticles = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const it of items) {
+      const k = it.statut_article_vs_regle ?? "INCONNU";
       m.set(k, (m.get(k) ?? 0) + 1);
     }
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
@@ -155,14 +238,18 @@ export default function DossiersList() {
         "statut_croisement",
         "statut_praxedo",
         "statut_pidi",
-        "statut_articles",
+        "mode_passage",
+        "type_site_terrain",
+        "type_pbo_terrain",
+        "article_facturation_propose",
+        "statut_article_vs_regle",
         "date_planifiee",
       ];
       const rows = items.map((d) =>
         headers
           .map((h) => {
             const v = (d as any)[h];
-            const s = v === null || v === undefined ? "" : String(v);
+            const s = v === null || v === undefined ? "" : Array.isArray(v) ? JSON.stringify(v) : String(v);
             return `"${s.replace(/"/g, '""')}"`;
           })
           .join(",")
@@ -184,12 +271,42 @@ export default function DossiersList() {
     setArticlesOpen(true);
   }
 
+  function openDrawer(d: DossierFacturable) {
+    setSelected(d);
+    setDrawerOpen(true);
+    setShowRawTerrain(false);
+  }
+
+  function closeDrawer() {
+    setDrawerOpen(false);
+    setSelected(null);
+    setShowRawTerrain(false);
+  }
+
+  const selectedCompare = useMemo(() => {
+    if (!selected) return null;
+    const proposed = uniq(parseCsvList(selected.article_facturation_propose));
+    const expected = uniq((selected.regle_articles_attendus ?? []).map((x) => String(x).trim()).filter(Boolean));
+    const verdict = computeArticleVerdict(proposed, expected);
+    return { proposed, expected, verdict };
+  }, [selected]);
+
+  const modalCompare = useMemo(() => {
+    if (!articlesTarget) return null;
+    const proposed = uniq(parseCsvList(articlesTarget.article_facturation_propose));
+    const expected = uniq((articlesTarget.regle_articles_attendus ?? []).map((x) => String(x).trim()).filter(Boolean));
+    const verdict = computeArticleVerdict(proposed, expected);
+    return { proposed, expected, verdict };
+  }, [articlesTarget]);
+
   return (
     <div className="space-y-4">
       <FiltersBar onSearch={(f) => load(f)} loading={loading} statuts={statutsFinal} />
 
       {error && (
-        <div className="mx-2 p-2 rounded border border-red-200 bg-red-50 text-sm text-red-700">{error}</div>
+        <div className="mx-2 p-2 rounded border border-red-200 bg-red-50 text-sm text-red-700">
+          {error}
+        </div>
       )}
 
       {/* Actions */}
@@ -234,29 +351,44 @@ export default function DossiersList() {
       </div>
 
       {/* Répartition */}
-      <div className="px-2">
-        <div className="text-sm text-gray-700 mb-2">Répartition :</div>
-        <div className="flex flex-wrap gap-2">
-          {countByCroisement.map(([k, v]) => (
-            <div key={k} className="flex items-center gap-2">
-              <Badge txt={k.replace("_", " ")} kind={croisementKind(k)} />
-              <span className="text-sm text-gray-700">{v}</span>
-            </div>
-          ))}
+      <div className="px-2 space-y-3">
+        <div>
+          <div className="text-sm text-gray-700 mb-2">Répartition (croisement) :</div>
+          <div className="flex flex-wrap gap-2">
+            {countByCroisement.map(([k, v]) => (
+              <div key={k} className="flex items-center gap-2">
+                <Badge txt={k.replace("_", " ")} kind={croisementKind(k)} />
+                <span className="text-sm text-gray-700">{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <div className="text-sm text-gray-700 mb-2">Répartition (articles vs règle) :</div>
+          <div className="flex flex-wrap gap-2">
+            {countByArticles.map(([k, v]) => (
+              <div key={k} className="flex items-center gap-2">
+                <Badge txt={k.replaceAll("_", " ")} kind={articleVsKind(k)} />
+                <span className="text-sm text-gray-700">{v}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
       {/* Tableau */}
       <div className="border rounded-lg overflow-auto bg-white mx-2">
-        <table className="min-w-[1400px] w-full text-sm">
+        <table className="min-w-[1600px] w-full text-sm">
           <thead className="bg-gray-50">
             <tr className="text-left">
               <th className="p-3">OT</th>
               <th className="p-3">ND</th>
-              <th className="p-3">Activité</th>
-              <th className="p-3">Produit</th>
+              <th className="p-3">Act.</th>
+              <th className="p-3">Prod.</th>
               <th className="p-3">Code cible</th>
               <th className="p-3">Clôture</th>
+              <th className="p-3">Terrain</th>
               <th className="p-3">Règle</th>
               <th className="p-3">Statut final</th>
               <th className="p-3">Croisement</th>
@@ -264,13 +396,14 @@ export default function DossiersList() {
               <th className="p-3">PIDI</th>
               <th className="p-3">Articles</th>
               <th className="p-3">Planifiée</th>
+              <th className="p-3"></th>
             </tr>
           </thead>
 
           <tbody>
             {items.length === 0 ? (
               <tr>
-                <td colSpan={13} className="p-6 text-center text-gray-500">
+                <td colSpan={15} className="p-6 text-center text-gray-500">
                   {loading ? "Chargement…" : "Aucun dossier à afficher."}
                 </td>
               </tr>
@@ -279,8 +412,16 @@ export default function DossiersList() {
                 const sf = d.statut_final ?? "NON_FACTURABLE";
                 const cro = d.statut_croisement ?? "INCONNU";
 
+                const terrainLabel = d.mode_passage ? d.mode_passage : "—";
+                const artVs = d.statut_article_vs_regle ?? "INCONNU";
+
                 return (
-                  <tr key={d.key_match} className="border-t hover:bg-gray-50/50">
+                  <tr
+                    key={d.key_match}
+                    className="border-t hover:bg-gray-50/50 cursor-pointer"
+                    onClick={() => openDrawer(d)}
+                    title="Clique pour ouvrir les détails"
+                  >
                     <td className="p-3 font-mono">{d.ot_key ?? "—"}</td>
                     <td className="p-3 font-mono">{d.nd_global ?? "—"}</td>
                     <td className="p-3">{d.activite_code ?? "—"}</td>
@@ -292,6 +433,14 @@ export default function DossiersList() {
                         <Badge txt={d.code_cloture_code} kind={clotureKind(d.code_cloture_code)} />
                       ) : (
                         "—"
+                      )}
+                    </td>
+
+                    <td className="p-3">
+                      {d.mode_passage ? (
+                        <Badge txt={terrainLabel} kind={terrainKind(d.mode_passage)} />
+                      ) : (
+                        <span className="text-gray-500">—</span>
                       )}
                     </td>
 
@@ -311,27 +460,40 @@ export default function DossiersList() {
 
                     <td className="p-3">
                       {d.statut_praxedo ? (
-                        <Badge txt={praxedoLabel(d)} kind={d.statut_praxedo.toLowerCase().includes("valid") ? "green" : "gray"} />
+                        <Badge
+                          txt={praxedoLabel(d)}
+                          kind={d.statut_praxedo.toLowerCase().includes("valid") ? "green" : "gray"}
+                        />
                       ) : (
                         "—"
                       )}
                     </td>
 
                     <td className="p-3">
-                      {/* rendu “comme avant” : texte violet */}
                       <span className="text-purple-700 font-medium">{pidiLabel(d)}</span>
                     </td>
 
                     <td className="p-3">
-                      <button
-                        onClick={() => openArticles(d)}
-                        className="inline-flex items-center px-3 py-1 rounded bg-blue-100 text-blue-700 text-xs font-medium hover:bg-blue-200"
-                      >
-                        Vérifier
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <Badge txt={artVs.replaceAll("_", " ")} kind={articleVsKind(artVs)} />
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openArticles(d);
+                          }}
+                          className="inline-flex items-center px-3 py-1 rounded bg-blue-100 text-blue-700 text-xs font-medium hover:bg-blue-200"
+                          title="Comparer proposé vs attendus"
+                        >
+                          Comparer
+                        </button>
+                      </div>
                     </td>
 
                     <td className="p-3">{formatFrDate(d.date_planifiee)}</td>
+
+                    <td className="p-3">
+                      <ChevronRight className="h-4 w-4 text-gray-400" />
+                    </td>
                   </tr>
                 );
               })
@@ -340,18 +502,227 @@ export default function DossiersList() {
         </table>
       </div>
 
-      {/* Modal Articles */}
-      {articlesOpen && articlesTarget && (
+      {/* Drawer Détails */}
+      {drawerOpen && selected && (
+        <div className="fixed inset-0 z-50">
+          {/* overlay */}
+          <div
+            className="absolute inset-0 bg-black/30"
+            onClick={closeDrawer}
+          />
+
+          {/* panel */}
+          <div className="absolute right-0 top-0 h-full w-full max-w-[520px] bg-white shadow-2xl border-l flex flex-col">
+            <div className="px-5 py-4 border-b flex items-start justify-between">
+              <div className="space-y-1">
+                <div className="text-xs text-gray-500">Détails dossier</div>
+                <div className="text-lg font-semibold">
+                  <span className="font-mono">{selected.ot_key ?? "—"}</span>
+                  <span className="text-gray-400"> • </span>
+                  <span className="font-mono">{selected.nd_global ?? "—"}</span>
+                </div>
+
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <Badge txt={(selected.statut_final ?? "—").replaceAll("_", " ")} kind={statutFinalKind(selected.statut_final)} />
+                  <Badge txt={(selected.statut_croisement ?? "INCONNU").replaceAll("_", " ")} kind={croisementKind(selected.statut_croisement)} />
+                  <Badge txt={(selected.statut_article_vs_regle ?? "INCONNU").replaceAll("_", " ")} kind={articleVsKind(selected.statut_article_vs_regle)} />
+                </div>
+              </div>
+
+              <button
+                onClick={closeDrawer}
+                className="text-gray-500 hover:text-gray-800"
+                aria-label="Fermer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto p-5 space-y-5">
+              {/* Résumé */}
+              <div className="rounded-lg border bg-white p-4 space-y-3">
+                <SectionTitle title="Résumé" right={<Info className="h-4 w-4 text-gray-400" />} />
+                <div className="space-y-2">
+                  <KeyValue k="Activité / Produit" v={<span className="font-medium">{selected.activite_code ?? "—"} / {selected.produit_code ?? "—"}</span>} />
+                  <KeyValue k="Code cible" v={selected.code_cible ?? "—"} />
+                  <KeyValue k="Clôture" v={selected.code_cloture_code ? <Badge txt={selected.code_cloture_code} kind={clotureKind(selected.code_cloture_code)} /> : "—"} />
+                  <KeyValue k="Planifiée" v={formatFrDate(selected.date_planifiee)} />
+                  <KeyValue k="Technicien" v={selected.technicien ?? "—"} />
+                </div>
+              </div>
+
+              {/* Terrain */}
+              <div className="rounded-lg border bg-white p-4 space-y-3">
+                <SectionTitle
+                  title="Terrain (PBO / passage)"
+                  right={
+                    <button
+                      className="text-xs text-blue-700 hover:underline"
+                      onClick={() => setShowRawTerrain((x) => !x)}
+                    >
+                      {showRawTerrain ? "Masquer texte source" : "Voir texte source"}
+                    </button>
+                  }
+                />
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border bg-gray-50 p-3">
+                    <div className="text-xs text-gray-500 mb-1">Mode passage</div>
+                    <div className="text-sm font-medium">{selected.mode_passage ?? "—"}</div>
+                  </div>
+                  <div className="rounded-lg border bg-gray-50 p-3">
+                    <div className="text-xs text-gray-500 mb-1">Type site</div>
+                    <div className="text-sm font-medium">{selected.type_site_terrain ?? "—"}</div>
+                  </div>
+                  <div className="rounded-lg border bg-gray-50 p-3 col-span-2">
+                    <div className="text-xs text-gray-500 mb-1">Type PBO</div>
+                    <div className="text-sm font-medium">{selected.type_pbo_terrain ?? "—"}</div>
+                  </div>
+                </div>
+
+                {showRawTerrain && (
+                  <div className="space-y-2">
+                    <div className="rounded border bg-gray-50 p-3">
+                      <div className="text-xs text-gray-500 mb-1">desc_site (source)</div>
+                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">
+                        {selected.desc_site ?? "—"}
+                      </pre>
+                    </div>
+                    <div className="rounded border bg-gray-50 p-3">
+                      <div className="text-xs text-gray-500 mb-1">description (source)</div>
+                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">
+                        {selected.description ?? "—"}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Règle */}
+              <div className="rounded-lg border bg-white p-4 space-y-3">
+                <SectionTitle title="Règle appliquée" />
+                <div className="space-y-2">
+                  <KeyValue k="Code règle" v={<span className="font-mono">{selected.regle_code ?? "—"}</span>} />
+                  <KeyValue k="Libellé" v={selected.libelle_regle ?? "—"} />
+                  <KeyValue k="Statut facturation" v={selected.statut_facturation ?? "—"} />
+                  <KeyValue
+                    k="Clôtures facturables"
+                    v={
+                      selected.codes_cloture_facturables?.length ? (
+                        <div className="flex flex-wrap gap-1">
+                          {selected.codes_cloture_facturables.map((c) => (
+                            <Chip key={c} txt={c} />
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-gray-500">—</span>
+                      )
+                    }
+                  />
+                </div>
+
+                <div className="pt-2">
+                  <div className="text-xs text-gray-500 mb-2">Articles attendus (règle)</div>
+                  {selected.regle_articles_attendus?.length ? (
+                    <div className="flex flex-wrap gap-1">
+                      {selected.regle_articles_attendus.map((a) => (
+                        <Chip key={a} txt={a} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-500">— (règle sans attendus)</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Articles */}
+              <div className="rounded-lg border bg-white p-4 space-y-3">
+                <SectionTitle
+                  title="Articles (comparaison)"
+                  right={
+                    <button
+                      className="text-xs text-blue-700 hover:underline"
+                      onClick={() => openArticles(selected)}
+                    >
+                      Ouvrir en grand
+                    </button>
+                  }
+                />
+
+                {selectedCompare && (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <Badge txt={selectedCompare.verdict} kind={articleVsKind(selectedCompare.verdict)} />
+                      <div className="text-sm text-gray-700">
+                        {selectedCompare.verdict === "OK" && "Les articles proposés matchent la règle."}
+                        {selectedCompare.verdict === "A_VERIFIER" && "Au moins un article proposé ne match pas les attendus."}
+                        {selectedCompare.verdict === "INCONNU" && "Pas d’articles attendus sur la règle."}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-lg border bg-gray-50 p-3">
+                        <div className="text-xs text-gray-500 mb-2">Proposé</div>
+                        {selectedCompare.proposed.length ? (
+                          <div className="flex flex-wrap gap-1">
+                            {selectedCompare.proposed.map((p) => <Chip key={p} txt={p} />)}
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-500">—</div>
+                        )}
+                      </div>
+
+                      <div className="rounded-lg border bg-gray-50 p-3">
+                        <div className="text-xs text-gray-500 mb-2">Attendus</div>
+                        {selectedCompare.expected.length ? (
+                          <div className="flex flex-wrap gap-1">
+                            {selectedCompare.expected.map((e) => <Chip key={e} txt={e} />)}
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-500">—</div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded border bg-gray-50 p-3">
+                      <div className="text-xs text-gray-500 mb-2">Liste articles PIDI (brut)</div>
+                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">
+                        {selected.liste_articles ?? "—"}
+                      </pre>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="border-t p-4 flex items-center justify-between">
+              <div className="text-xs text-gray-500">
+                Clique une ligne pour changer • ESC pour fermer
+              </div>
+              <button
+                onClick={closeDrawer}
+                className="border rounded px-3 py-2 hover:bg-gray-50"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Articles (comparaison dédiée) */}
+      {articlesOpen && articlesTarget && modalCompare && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-lg w-full max-w-2xl p-6 space-y-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-3xl p-6 space-y-4">
             <div className="flex items-center justify-between">
               <div className="space-y-1">
-                <h2 className="text-lg font-semibold">Articles</h2>
+                <h2 className="text-lg font-semibold">Comparer les articles</h2>
                 <div className="text-xs text-gray-500">
                   OT: <span className="font-mono">{articlesTarget.ot_key ?? "—"}</span> • ND:{" "}
                   <span className="font-mono">{articlesTarget.nd_global ?? "—"}</span>
                 </div>
               </div>
+
               <button
                 onClick={() => {
                   setArticlesOpen(false);
@@ -364,14 +735,47 @@ export default function DossiersList() {
               </button>
             </div>
 
+            <div className="flex items-center gap-2">
+              <Badge txt={modalCompare.verdict} kind={articleVsKind(modalCompare.verdict)} />
+              <div className="text-sm text-gray-700">
+                {modalCompare.verdict === "OK" && "Match OK."}
+                {modalCompare.verdict === "A_VERIFIER" && "Mismatch / à contrôler."}
+                {modalCompare.verdict === "INCONNU" && "Règle sans attendus."}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="rounded-lg border bg-gray-50 p-4">
+                <div className="text-xs text-gray-500 mb-2">Articles proposés</div>
+                {modalCompare.proposed.length ? (
+                  <div className="flex flex-wrap gap-1">
+                    {modalCompare.proposed.map((p) => <Chip key={p} txt={p} />)}
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-500">—</div>
+                )}
+              </div>
+
+              <div className="rounded-lg border bg-gray-50 p-4">
+                <div className="text-xs text-gray-500 mb-2">Articles attendus (règle)</div>
+                {modalCompare.expected.length ? (
+                  <div className="flex flex-wrap gap-1">
+                    {modalCompare.expected.map((e) => <Chip key={e} txt={e} />)}
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-500">—</div>
+                )}
+              </div>
+            </div>
+
             <div className="rounded border bg-gray-50 p-3 text-sm">
-              <div className="text-xs text-gray-500 mb-2">Liste des articles (PIDI)</div>
+              <div className="text-xs text-gray-500 mb-2">Liste des articles (PIDI brut)</div>
               <pre className="whitespace-pre-wrap break-words text-gray-800">
                 {articlesTarget.liste_articles ?? "—"}
               </pre>
             </div>
 
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2">
               <button
                 onClick={() => {
                   setArticlesOpen(false);

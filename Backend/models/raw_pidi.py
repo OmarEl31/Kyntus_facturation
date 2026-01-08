@@ -21,3 +21,5 @@ class RawPidi(Base):
     agence = Column(Text)
     liste_articles = Column(Text)
     imported_at = Column(TIMESTAMP)
+    numero_pdd = Column(Text)
+    attachement_valide = Column(Text)

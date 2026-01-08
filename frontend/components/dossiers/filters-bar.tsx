@@ -1,3 +1,4 @@
+//frontend/components/dossiers/filters-bar.tsx
 "use client";
 import { useState } from "react";
 import { Search, Filter } from "lucide-react";
