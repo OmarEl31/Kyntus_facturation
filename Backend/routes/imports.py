@@ -1,4 +1,3 @@
-# Backend/routes/imports.py
 from __future__ import annotations
 
 import os
@@ -9,7 +8,7 @@ from datetime import datetime
 from io import TextIOWrapper
 from typing import Any
 
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form, Query
 from sqlalchemy.orm import Session
 
 from database.connection import get_db
@@ -144,7 +143,6 @@ def _require_file_type(expected: str, norm_headers: list[str]) -> None:
         if not (hs & prax_markers):
             raise HTTPException(status_code=400, detail="CSV ne ressemble pas à un export Praxedo.")
     elif expected == "PIDI":
-        # soft check
         if not (hs & pidi_markers):
             raise HTTPException(status_code=400, detail="CSV ne ressemble pas à un export PIDI.")
 
@@ -163,10 +161,8 @@ def _normalize_row(r: dict[str, Any]) -> dict[str, Any]:
         nk = _norm(k)
         vv = v.strip() if isinstance(v, str) else v
 
-        # ne pas écraser une valeur existante non vide
         if nk in out and str(out.get(nk) or "").strip() != "":
             continue
-        # ne pas écraser par vide
         if str(vv or "").strip() == "" and nk in out:
             continue
 
@@ -174,10 +170,6 @@ def _normalize_row(r: dict[str, Any]) -> dict[str, Any]:
     return out
 
 def _find_value_by_header_like(raw_row: dict[str, Any], *contains_all: str) -> str | None:
-    """
-    Cherche dans les headers originaux (non normés) un champ dont le header contient tous les mots.
-    Utile quand l'export a un header bizarre.
-    """
     wants = [w.lower() for w in contains_all]
     for k, v in raw_row.items():
         if not k or v is None:
@@ -233,25 +225,19 @@ def _guess_cloture(h: dict[str, Any]) -> str | None:
 # -------------------------
 # PIDI helpers
 # -------------------------
-def _pidi_flux_key(h: dict[str, Any], i: int, now: datetime) -> str:
-    flux = _clean_text(_val(h, "numero_flux_pidi", "n_de_flux_pidi", "n_de_flux_pid", "id_flux", "flux"))
-    if flux:
-        return flux
-    return f"flux_{i}_{int(now.timestamp())}"
-
 def _pidi_dossier_key_safe(h: dict[str, Any], i: int, now: datetime) -> str:
-    """
-    Clé dossier pour agrégation : OT|ND
-    ✅ SÉCURITÉ: si OT et ND absents => fallback unique (sinon tu finis avec 1 seule ligne)
-    """
     numero_ot = _clean_text(_val(h, "numero_ot", "n_ot", "ot", "ot_key", "numero_de_l_ot", "numero_intervention"))
     nd = _clean_text(_val(h, "nd", "n_d", "ndi", "n_di", "numero_di", "numero_de_di"))
 
     if (numero_ot is None or numero_ot == "") and (nd is None or nd == ""):
-        # fallback unique par ligne
         return f"NO_OTND_{int(now.timestamp())}_{i}"
 
     return f"{numero_ot or 'NA'}|{nd or 'NA'}"
+
+def _resolve_delimiter(delimiter_q: str | None, delimiter_form: str | None) -> str:
+    # priorité : query (ton front) > form (ancien) > défaut
+    d = (delimiter_q or delimiter_form or ";").strip()
+    return d if d in {",", ";", "\t", "|"} else ";"
 
 # -------------------------
 # Imports
@@ -271,6 +257,7 @@ async def import_praxedo(
         ds_non_null = 0
         now = datetime.utcnow()
 
+
         for idx, raw_row in enumerate(reader):
             if not raw_row:
                 continue
@@ -283,11 +270,12 @@ async def import_praxedo(
 
             cloture = _guess_cloture(h)
 
-            # ✅ desc_site robuste (ta donnée principale)
             ds = _clean_text(_val(h, "desc_site", "infos_site", "info_site", "infos_du_site", "infos__site"))
             if not ds:
-                # fallback par header "like"
-                ds = _clean_text(_find_value_by_header_like(raw_row, "desc", "site") or _find_value_by_header_like(raw_row, "infos", "site"))
+                ds = _clean_text(
+                    _find_value_by_header_like(raw_row, "desc", "site")
+                    or _find_value_by_header_like(raw_row, "infos", "site")
+                )
 
             desc = _clean_text(_val(h, "description"))
 
@@ -341,7 +329,6 @@ async def import_pidi(
 
         now = datetime.utcnow()
 
-        # ✅ 1 ligne par dossier OT|ND (mais sans collapse NA|NA)
         agg: dict[str, dict[str, Any]] = {}
         rows_in = 0
 
@@ -352,12 +339,10 @@ async def import_pidi(
 
             h = _normalize_row(raw_row)
             dossier_key = _pidi_dossier_key_safe(h, i, now)
-            flux_key = _pidi_flux_key(h, i, now)
 
             rec = agg.get(dossier_key)
             if rec is None:
                 rec = {
-                    # on garde le flux pour debug si besoin, mais PK raw = dossier_key (ton choix)
                     "numero_flux_pidi": dossier_key,
                     "contrat": None,
                     "type_pidi": None,
@@ -370,52 +355,64 @@ async def import_pidi(
                     "code_gestion_chantier": None,
                     "agence": None,
                     "liste_articles": None,
-
-                    # ✅ NOUVEAU
-                    "numero_pdd": None,
-                    "attachement_valide": None,
-
+                    "numero_ppd": None,            # ✅
+                    "attachement_valide": None,    # ✅
                     "imported_at": now,
                 }
                 agg[dossier_key] = rec
 
-            rec["contrat"] = _pick_first(rec["contrat"], _clean_text(_val(h, "contrat")))
-            rec["type_pidi"] = _pick_first(rec["type_pidi"], _clean_text(_val(h, "type", "type_pidi")))
-            rec["statut"] = _clean_text(_val(h, "statut")) or rec["statut"]
+            rec["contrat"] = _pick_first(rec.get("contrat"), _clean_text(_val(h, "contrat")))
+            rec["type_pidi"] = _pick_first(rec.get("type_pidi"), _clean_text(_val(h, "type", "type_pidi")))
+            rec["statut"] = _clean_text(_val(h, "statut")) or rec.get("statut")
 
-            # ✅ robust OT / ND (sinon croisement KO)
-            rec["nd"] = _pick_first(rec["nd"], _clean_text(_val(h, "nd", "n_d", "ndi", "n_di", "numero_di", "numero_de_di")))
-            rec["numero_ot"] = _pick_first(rec["numero_ot"], _clean_text(_val(h, "numero_ot", "n_ot", "ot", "ot_key", "numero_de_l_ot", "numero_intervention")))
+            rec["nd"] = _pick_first(rec.get("nd"), _clean_text(_val(h, "nd", "n_d", "ndi", "n_di", "numero_di", "numero_de_di")))
+            rec["numero_ot"] = _pick_first(rec.get("numero_ot"), _clean_text(_val(h, "numero_ot", "n_ot", "ot", "ot_key", "numero_de_l_ot", "numero_intervention")))
 
-            rec["code_secteur"] = _pick_first(rec["code_secteur"], _clean_text(_val(h, "code_secteur")))
-            rec["numero_att"] = _pick_first(rec["numero_att"], _clean_text(_val(h, "numero_att", "n_att", "n_att_")))
-            rec["oeie"] = _pick_first(rec["oeie"], _clean_text(_val(h, "oeie")))
-            rec["code_gestion_chantier"] = _pick_first(rec["code_gestion_chantier"], _clean_text(_val(h, "code_gestion", "code_gestion_chantier")))
-            rec["agence"] = _pick_first(rec["agence"], _clean_text(_val(h, "agence")))
+            rec["code_secteur"] = _pick_first(rec.get("code_secteur"), _clean_text(_val(h, "code_secteur")))
+            rec["numero_att"] = _pick_first(rec.get("numero_att"), _clean_text(_val(h, "numero_att", "n_att", "n_att_")))
+            rec["oeie"] = _pick_first(rec.get("oeie"), _clean_text(_val(h, "oeie")))
+            rec["code_gestion_chantier"] = _pick_first(rec.get("code_gestion_chantier"), _clean_text(_val(h, "code_gestion", "code_gestion_chantier")))
+            rec["agence"] = _pick_first(rec.get("agence"), _clean_text(_val(h, "agence")))
 
             rec["liste_articles"] = _merge_articles(
-                rec["liste_articles"],
+                rec.get("liste_articles"),
                 _val(h, "liste_des_articles", "liste_articles", "liste_d_articles"),
             )
 
-            # ✅ N°PDD (N°PDD -> n_pdd)
-            rec["numero_pdd"] = _pick_first(rec["numero_pdd"], _clean_text(_val(h, "n_pdd", "numero_pdd", "pdd")))
-
-            # ✅ Attachement validé (Attachement validé -> attachement_valide)
-            rec["attachement_valide"] = _pick_first(
-                rec["attachement_valide"],
-                _clean_text(_val(h, "attachement_valide", "attachement_validee", "attachement_valide_at", "attachement_valide_le")),
+            rec["numero_ppd"] = _pick_first(
+                rec.get("numero_ppd"),
+                _clean_text(_val(h, "n_ppd", "numero_ppd", "ppd", "n_pdd", "numero_pdd", "n°_ppd"))
             )
 
-            if DEBUG_IMPORTS and i < 2:
-                print("PIDI sample dossier_key:", dossier_key, "flux:", flux_key)
-                print("PIDI sample ot:", rec["numero_ot"], "nd:", rec["nd"], "pdd:", rec["numero_pdd"], "att:", rec["attachement_valide"])
+            rec["attachement_valide"] = _pick_first(
+                rec.get("attachement_valide"),
+                _clean_text(_val(h, "attachement_valide", "attachement_validee", "attachement_valide_le", "attachement_valide_at"))
+            )
 
         upserted = 0
-        for key, rec in agg.items():
-            rec = _sa_only_known_columns(RawPidi, rec)
-            db.query(RawPidi).filter(RawPidi.numero_flux_pidi == key).delete(synchronize_session=False)
-            db.add(RawPidi(**rec))
+        for dossier_key, rec in agg.items():
+            payload = {
+                "numero_flux_pidi": rec.get("numero_flux_pidi"),
+                "contrat": rec.get("contrat"),
+                "type_pidi": rec.get("type_pidi"),
+                "statut": rec.get("statut"),
+                "nd": rec.get("nd"),
+                "code_secteur": rec.get("code_secteur"),
+                "numero_ot": rec.get("numero_ot"),
+                "numero_att": rec.get("numero_att"),
+                "oeie": rec.get("oeie"),
+                "code_gestion_chantier": rec.get("code_gestion_chantier"),
+                "agence": rec.get("agence"),
+                "liste_articles": rec.get("liste_articles"),
+                "numero_ppd": rec.get("numero_ppd"),                 # ✅
+                "attachement_valide": rec.get("attachement_valide"), # ✅
+                "imported_at": now,
+            }
+
+            payload = _sa_only_known_columns(RawPidi, payload)
+
+            db.query(RawPidi).filter(RawPidi.numero_flux_pidi == dossier_key).delete(synchronize_session=False)
+            db.add(RawPidi(**payload))
             upserted += 1
 
         db.commit()

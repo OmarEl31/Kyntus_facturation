@@ -1,69 +1,70 @@
 # Backend/schemas/dossier_facturable.py
 from pydantic import BaseModel
-from typing import Optional, List, Any
+from typing import Optional, Any, List
 from datetime import datetime
 
 class DossierFacturable(BaseModel):
-    key_match: Optional[str]
+    key_match: str
 
-    ot_key: Optional[str]
-    nd_global: Optional[str]
-    statut_croisement: Optional[str]
+    ot_key: Optional[str] = None
+    nd_global: Optional[str] = None
+    statut_croisement: Optional[str] = None
 
-    praxedo_ot_key: Optional[str]
-    praxedo_nd: Optional[str]
-    activite_code: Optional[str]
-    produit_code: Optional[str]
-    code_cloture_code: Optional[str]
-    statut_praxedo: Optional[str]
-    date_planifiee: Optional[str]
-    date_cloture: Optional[datetime]
-    technicien: Optional[str]
-    commentaire_praxedo: Optional[str]
+    praxedo_ot_key: Optional[str] = None
+    praxedo_nd: Optional[str] = None
+    activite_code: Optional[str] = None
+    produit_code: Optional[str] = None
+    code_cloture_code: Optional[str] = None
+    statut_praxedo: Optional[str] = None
+    date_planifiee: Optional[str] = None
+    date_cloture: Optional[datetime] = None
+    technicien: Optional[str] = None
+    commentaire_praxedo: Optional[str] = None
 
-    statut_pidi: Optional[str]
-    code_cible: Optional[str]
-    pidi_date_creation: Optional[datetime]
-    numero_att: Optional[str]
-    liste_articles: Optional[str]
-    commentaire_pidi: Optional[str]
+    statut_pidi: Optional[str] = None
+    code_cible: Optional[str] = None
+    pidi_date_creation: Optional[datetime] = None
+    numero_att: Optional[str] = None
+    liste_articles: Optional[str] = None
+    commentaire_pidi: Optional[str] = None
 
-    regle_code: Optional[str]
-    libelle_regle: Optional[str]
-    condition_sql: Optional[str]
-    condition_json: Optional[Any]
-    statut_facturation: Optional[str]
-    codes_cloture_facturables: Optional[List[str]]
-    type_branchement: Optional[Any]
-    plp_applicable: Optional[bool]
-    services: Optional[Any]
-    prix_degressifs: Optional[Any]
-    articles_optionnels: Optional[Any]
-    documents_attendus: Optional[List[str]]
-    pieces_facturation: Optional[List[str]]
-    outils_depose: Optional[List[str]]
-    justificatifs: Optional[Any]
-    code_chantier_generique: Optional[str]
-    categorie: Optional[str]
+    # ✅ nouveaux champs
+    numero_ppd: Optional[str] = None
+    attachement_valide: Optional[str] = None
 
-    statut_articles: Optional[str]
+    regle_code: Optional[str] = None
+    libelle_regle: Optional[str] = None
+    condition_sql: Optional[str] = None
+    condition_json: Optional[Any] = None
+    statut_facturation: Optional[str] = None
+    codes_cloture_facturables: Optional[List[str]] = None
 
-    statut_final: Optional[str]
-    cloture_facturable: Optional[bool]
-    generated_at: Optional[datetime]
+    type_branchement: Optional[Any] = None
+    plp_applicable: Optional[bool] = None
+    services: Optional[Any] = None
+    prix_degressifs: Optional[Any] = None
+    articles_optionnels: Optional[Any] = None
+    documents_attendus: Optional[List[str]] = None
+    pieces_facturation: Optional[List[str]] = None
+    outils_depose: Optional[List[str]] = None
+    justificatifs: Optional[Any] = None
+    code_chantier_generique: Optional[str] = None
+    categorie: Optional[str] = None
 
-    # ✅ Terrain
-    desc_site: Optional[str]
-    description: Optional[str]
-    type_site_terrain: Optional[str]
-    type_pbo_terrain: Optional[str]
-    mode_passage: Optional[str]
-    article_facturation_propose: Optional[str]
-    statut_article: Optional[str]
+    statut_articles: Optional[str] = None
+    statut_final: Optional[str] = None
+    cloture_facturable: Optional[bool] = None
+    generated_at: Optional[datetime] = None
 
-    # ✅ Nouveau : contrôle terrain vs règle
-    regle_articles_attendus: Optional[Any]
-    statut_article_vs_regle: Optional[str]
+    desc_site: Optional[str] = None
+    description: Optional[str] = None
+    type_site_terrain: Optional[str] = None
+    type_pbo_terrain: Optional[str] = None
+    mode_passage: Optional[str] = None
+    article_facturation_propose: Optional[str] = None
+    statut_article: Optional[str] = None
+    regle_articles_attendus: Optional[Any] = None
+    statut_article_vs_regle: Optional[str] = None
 
     class Config:
         from_attributes = True

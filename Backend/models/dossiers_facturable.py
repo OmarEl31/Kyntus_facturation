@@ -67,3 +67,5 @@ class VDossierFacturable(Base):
     # ✅ Nouveau : contrôle terrain vs règle
     regle_articles_attendus = Column(JSONB)
     statut_article_vs_regle = Column(Text)
+    numero_ppd = Column(Text)
+    attachement_valide = Column(Text)

@@ -66,4 +66,7 @@ export interface DossierFacturable {
   regle_articles_attendus?: string[] | null;       // ex: ["LSA","LSIM","LSOU"] ou ["PSER","PLP"]
   statut_article?: string | null;                  // si tu l'utilises
   statut_article_vs_regle?: StatutArticleVsRegle | null;
+  numero_ppd?: string | null;
+  attachement_valide?: string | null;
+
 }

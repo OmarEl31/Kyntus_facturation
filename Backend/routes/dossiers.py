@@ -1,8 +1,6 @@
-
 # Backend/routes/dossiers.py
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 
 from database.connection import get_db
 from models.dossiers_facturable import VDossierFacturable
@@ -11,26 +9,29 @@ from schemas.dossier_facturable import DossierFacturable
 router = APIRouter(prefix="/api/dossiers", tags=["dossiers"])
 
 @router.get("", response_model=list[DossierFacturable])
-def list_dossiers(
-    q: str | None = Query(None),
-    statut: str | None = Query(None),
-    croisement: str | None = Query(None),
+def get_dossiers(
+    q: str | None = None,
+    statut: str | None = None,
+    croisement: str | None = None,
+    ppd: str | None = None,
     db: Session = Depends(get_db),
 ):
-    query = db.query(VDossierFacturable)
+    qs = db.query(VDossierFacturable)
 
     if q:
         like = f"%{q}%"
-        query = query.filter(
-            or_(
-                VDossierFacturable.ot_key.ilike(like),
-                VDossierFacturable.nd_global.ilike(like),
-            )
+        qs = qs.filter(
+            (VDossierFacturable.ot_key.ilike(like)) |
+            (VDossierFacturable.nd_global.ilike(like))
         )
+
     if statut:
-        query = query.filter(VDossierFacturable.statut_final == statut)
+        qs = qs.filter(VDossierFacturable.statut_final == statut)
+
     if croisement:
-        query = query.filter(VDossierFacturable.statut_croisement == croisement)
+        qs = qs.filter(VDossierFacturable.statut_croisement == croisement)
 
-    return query.order_by(VDossierFacturable.generated_at.desc()).all()
+    if ppd:
+        qs = qs.filter(VDossierFacturable.numero_ppd == ppd)
 
+    return qs.order_by(VDossierFacturable.generated_at.desc()).all()

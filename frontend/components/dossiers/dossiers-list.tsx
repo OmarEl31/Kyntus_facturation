@@ -1,7 +1,8 @@
+// frontend/components/dossiers/dossiers-list.tsx
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCw, Upload, Download, X, ChevronRight, Info } from "lucide-react";
+import { RefreshCw, Upload, Download, X, ChevronRight, Info, Layers } from "lucide-react";
 
 import { listDossiers, statutsFinal } from "@/services/dossiersApi";
 import type { DossierFacturable } from "@/types/dossier";
@@ -10,24 +11,66 @@ import type { DossiersFilters } from "@/services/dossiersApi";
 import FiltersBar from "./filters-bar";
 import FileUploadModal from "./file-upload-modal";
 
-type BadgeKind = "green" | "yellow" | "red" | "gray" | "purple" | "blue" | "orange";
+type BadgeKind =
+  | "green"
+  | "yellow"
+  | "red"
+  | "gray"
+  | "purple"
+  | "blue"
+  | "orange"
+  | "indigo"
+  | "teal"
+  | "rose"
+  | "slate"
+  | "cyan"
+  | "fuchsia"
+  | "lime";
+
+// ✅ Bouton Détails : clair + élégant + pas déjà utilisé (STONE)
+// ✅ Avec ! pour écraser un éventuel style global noir
+const DETAILS_BTN_CLASS =
+  "inline-flex items-center justify-center rounded-md " +
+  "!border !border-stone-200 !bg-stone-50 " +
+  "px-2.5 py-1 text-[11px] font-semibold " +
+  "!text-stone-800 whitespace-nowrap " +
+  "shadow-sm transition-colors " +
+  "hover:!bg-stone-100 hover:!border-stone-300 " +
+  "focus:outline-none focus:ring-2 focus:ring-stone-200 focus:ring-offset-1";
 
 function badgeClass(kind: BadgeKind) {
   switch (kind) {
     case "green":
-      return "bg-green-100 text-green-700";
+      return "bg-green-100 text-green-800";
     case "yellow":
-      return "bg-yellow-100 text-yellow-800";
+      return "bg-amber-100 text-amber-900";
     case "red":
-      return "bg-red-100 text-red-700";
+      return "bg-red-100 text-red-800";
     case "purple":
-      return "bg-purple-100 text-purple-700";
+      return "bg-violet-100 text-violet-800";
     case "blue":
-      return "bg-blue-100 text-blue-700";
+      return "bg-sky-100 text-sky-800";
     case "orange":
-      return "bg-orange-100 text-orange-800";
+      return "bg-orange-100 text-orange-900";
+
+    case "indigo":
+      return "bg-indigo-100 text-indigo-800";
+    case "teal":
+      return "bg-teal-100 text-teal-900";
+    case "rose":
+      return "bg-rose-100 text-rose-800";
+    case "slate":
+      return "bg-slate-100 text-slate-800";
+
+    case "cyan":
+      return "bg-cyan-100 text-cyan-900";
+    case "fuchsia":
+      return "bg-fuchsia-100 text-fuchsia-900";
+    case "lime":
+      return "bg-lime-100 text-lime-900";
+
     default:
-      return "bg-gray-100 text-gray-700";
+      return "bg-gray-100 text-gray-800";
   }
 }
 
@@ -85,10 +128,10 @@ function praxedoLabel(d: DossierFacturable) {
 
 function terrainKind(mode?: string | null): BadgeKind {
   const m = (mode ?? "").toUpperCase();
-  if (m.includes("SOUT")) return "blue";
-  if (m.includes("AER")) return "purple";
-  if (m.includes("IMM")) return "yellow";
-  return "gray";
+  if (m.includes("IMM")) return "indigo";     // IMMEUBLE
+  if (m.includes("SOUT")) return "cyan";      // SOUTERRAIN
+  if (m.includes("AER")) return "fuchsia";    // AERIEN
+  return "slate";
 }
 
 function articleVsKind(s?: string | null): BadgeKind {
@@ -111,10 +154,7 @@ function uniq(arr: string[]) {
 }
 
 function computeArticleVerdict(proposed: string[], expected: string[]) {
-  // Règle : si attendus vide => INCONNU
   if (expected.length === 0) return "INCONNU";
-
-  // Si tous les proposés "matchent" au moins un attendu par préfixe (LSIM1 match LSIM)
   const ok = proposed.every((p) => expected.some((e) => p === e || p.startsWith(e)));
   return ok ? "OK" : "A_VERIFIER";
 }
@@ -145,6 +185,41 @@ function KeyValue({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
+function groupByPpd(items: DossierFacturable[]) {
+  const m = new Map<string, DossierFacturable[]>();
+
+  for (const d of items) {
+    const hasPidi = !!d.statut_pidi;
+
+    let key: string;
+    if (!hasPidi) {
+      key = "— (sans PIDI)";
+    } else {
+      const raw = (d.numero_ppd ?? "").trim();
+      key = raw.length ? raw : "SANS_PPD";
+    }
+
+    if (!m.has(key)) m.set(key, []);
+    m.get(key)!.push(d);
+  }
+
+  const entries = Array.from(m.entries()).sort((a, b) => {
+    const aSansPidi = a[0].startsWith("— (sans PIDI)");
+    const bSansPidi = b[0].startsWith("— (sans PIDI)");
+    if (aSansPidi && !bSansPidi) return 1;
+    if (!aSansPidi && bSansPidi) return -1;
+
+    const aSansPpd = a[0] === "SANS_PPD";
+    const bSansPpd = b[0] === "SANS_PPD";
+    if (aSansPpd && !bSansPpd) return 1;
+    if (!aSansPpd && bSansPpd) return -1;
+
+    return a[0].localeCompare(b[0]);
+  });
+
+  return entries;
+}
+
 export default function DossiersList() {
   const [items, setItems] = useState<DossierFacturable[]>([]);
   const [filters, setFilters] = useState<DossiersFilters>({});
@@ -153,25 +228,37 @@ export default function DossiersList() {
   const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | null>(null);
   const [exporting, setExporting] = useState(false);
 
-  // Modal Articles (comparaison)
+  const [grouped, setGrouped] = useState(false);
+
   const [articlesOpen, setArticlesOpen] = useState(false);
   const [articlesTarget, setArticlesTarget] = useState<DossierFacturable | null>(null);
 
-  // Drawer détail
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selected, setSelected] = useState<DossierFacturable | null>(null);
   const [showRawTerrain, setShowRawTerrain] = useState(false);
+
+  const [rawItems, setRawItems] = useState<DossierFacturable[]>([]);
 
   const load = useCallback(
     async (f?: DossiersFilters) => {
       const activeFilters = f ?? filters;
       setLoading(true);
       setError(null);
+
       try {
         const data = await listDossiers(activeFilters);
-        setItems(data);
+        setRawItems(data);
+
+        const ppdNeedle = (activeFilters.ppd ?? "").trim();
+        const filtered =
+          ppdNeedle.length > 0
+            ? data.filter((d) => (d.numero_ppd ?? "").trim().toLowerCase().includes(ppdNeedle.toLowerCase()))
+            : data;
+
+        setItems(filtered);
         if (f) setFilters(f);
       } catch (e: any) {
+        setRawItems([]);
         setItems([]);
         setError(e?.message || "Erreur inconnue");
       } finally {
@@ -186,7 +273,6 @@ export default function DossiersList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ESC to close modal/drawer
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
@@ -204,6 +290,13 @@ export default function DossiersList() {
     return () => window.removeEventListener("keydown", onKey);
   }, [articlesOpen, drawerOpen]);
 
+  const ppdOptions = useMemo(() => {
+    const xs = rawItems
+      .map((d) => (d.numero_ppd ?? "").trim())
+      .filter((x) => x.length > 0);
+    return Array.from(new Set(xs)).sort((a, b) => a.localeCompare(b));
+  }, [rawItems]);
+
   const countByCroisement = useMemo(() => {
     const m = new Map<string, number>();
     for (const it of items) {
@@ -212,6 +305,19 @@ export default function DossiersList() {
     }
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [items]);
+
+  // ✅ PPD: compter seulement les dossiers PIDI
+  const countByPpd = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const it of items) {
+      if (!it.statut_pidi) continue;
+      const k = (it.numero_ppd ?? "").trim() || "SANS_PPD";
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
+  }, [items]);
+
+  const hasAnyPidi = useMemo(() => rawItems.some((d) => !!d.statut_pidi), [rawItems]);
 
   const countByArticles = useMemo(() => {
     const m = new Map<string, number>();
@@ -228,6 +334,8 @@ export default function DossiersList() {
       const headers = [
         "ot_key",
         "nd_global",
+        "numero_ppd",
+        "attachement_valide",
         "activite_code",
         "produit_code",
         "code_cible",
@@ -245,6 +353,7 @@ export default function DossiersList() {
         "statut_article_vs_regle",
         "date_planifiee",
       ];
+
       const rows = items.map((d) =>
         headers
           .map((h) => {
@@ -254,6 +363,7 @@ export default function DossiersList() {
           })
           .join(",")
       );
+
       const csv = [headers.join(","), ...rows].join("\n");
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
       const a = document.createElement("a");
@@ -299,17 +409,14 @@ export default function DossiersList() {
     return { proposed, expected, verdict };
   }, [articlesTarget]);
 
+  const groupedEntries = useMemo(() => groupByPpd(items), [items]);
+
   return (
     <div className="space-y-4">
-      <FiltersBar onSearch={(f) => load(f)} loading={loading} statuts={statutsFinal} />
+      <FiltersBar onSearch={(f) => load(f)} loading={loading} statuts={statutsFinal} ppds={ppdOptions} />
 
-      {error && (
-        <div className="mx-2 p-2 rounded border border-red-200 bg-red-50 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <div className="mx-2 p-2 rounded border border-red-200 bg-red-50 text-sm text-red-700">{error}</div>}
 
-      {/* Actions */}
       <div className="flex items-center justify-between px-2">
         <div className="text-sm text-gray-600">{loading ? "Chargement…" : `${items.length} dossiers`}</div>
 
@@ -321,6 +428,15 @@ export default function DossiersList() {
           >
             <RefreshCw className="h-4 w-4" />
             Rafraîchir
+          </button>
+
+          <button
+            onClick={() => setGrouped((x) => !x)}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50"
+            title="Regrouper les dossiers par PPD"
+          >
+            <Layers className="h-4 w-4" />
+            {grouped ? "Vue dossiers" : "Regrouper PPD"}
           </button>
 
           <button
@@ -350,7 +466,6 @@ export default function DossiersList() {
         </div>
       </div>
 
-      {/* Répartition */}
       <div className="px-2 space-y-3">
         <div>
           <div className="text-sm text-gray-700 mb-2">Répartition (croisement) :</div>
@@ -363,6 +478,25 @@ export default function DossiersList() {
             ))}
           </div>
         </div>
+
+        {hasAnyPidi ? (
+          <div>
+            <div className="text-sm text-gray-700 mb-2">Répartition (PPD) :</div>
+            <div className="flex flex-wrap gap-2">
+              {countByPpd.slice(0, 20).map(([k, v]) => (
+                <div key={k} className="flex items-center gap-2">
+                  <Badge txt={k} kind={k === "SANS_PPD" ? "rose" : "lime"} />
+                  <span className="text-sm text-gray-700">{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="text-sm text-gray-700 mb-2">Répartition (PPD) :</div>
+            <div className="text-sm text-gray-500">Importer PIDI pour afficher la répartition PPD.</div>
+          </div>
+        )}
 
         <div>
           <div className="text-sm text-gray-700 mb-2">Répartition (articles vs règle) :</div>
@@ -377,13 +511,14 @@ export default function DossiersList() {
         </div>
       </div>
 
-      {/* Tableau */}
       <div className="border rounded-lg overflow-auto bg-white mx-2">
-        <table className="min-w-[1600px] w-full text-sm">
+        <table className="min-w-[1900px] w-full text-sm">
           <thead className="bg-gray-50">
             <tr className="text-left">
               <th className="p-3">OT</th>
               <th className="p-3">ND</th>
+              <th className="p-3">PPD</th>
+              <th className="p-3">Attachement</th>
               <th className="p-3">Act.</th>
               <th className="p-3">Prod.</th>
               <th className="p-3">Code cible</th>
@@ -403,15 +538,14 @@ export default function DossiersList() {
           <tbody>
             {items.length === 0 ? (
               <tr>
-                <td colSpan={15} className="p-6 text-center text-gray-500">
+                <td colSpan={17} className="p-6 text-center text-gray-500">
                   {loading ? "Chargement…" : "Aucun dossier à afficher."}
                 </td>
               </tr>
-            ) : (
+            ) : !grouped ? (
               items.map((d) => {
                 const sf = d.statut_final ?? "NON_FACTURABLE";
                 const cro = d.statut_croisement ?? "INCONNU";
-
                 const terrainLabel = d.mode_passage ? d.mode_passage : "—";
                 const artVs = d.statut_article_vs_regle ?? "INCONNU";
 
@@ -424,6 +558,10 @@ export default function DossiersList() {
                   >
                     <td className="p-3 font-mono">{d.ot_key ?? "—"}</td>
                     <td className="p-3 font-mono">{d.nd_global ?? "—"}</td>
+
+                    <td className="p-3 font-mono">{d.numero_ppd ?? "—"}</td>
+                    <td className="p-3">{d.attachement_valide ?? "—"}</td>
+
                     <td className="p-3">{d.activite_code ?? "—"}</td>
                     <td className="p-3">{d.produit_code ?? "—"}</td>
                     <td className="p-3">{d.code_cible ?? "—"}</td>
@@ -474,17 +612,18 @@ export default function DossiersList() {
                     </td>
 
                     <td className="p-3">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 min-w-[210px]">
                         <Badge txt={artVs.replaceAll("_", " ")} kind={articleVsKind(artVs)} />
+
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            openArticles(d);
+                            openDrawer(d);
                           }}
-                          className="inline-flex items-center px-3 py-1 rounded bg-blue-100 text-blue-700 text-xs font-medium hover:bg-blue-200"
-                          title="Comparer proposé vs attendus"
+                          className={`${DETAILS_BTN_CLASS} ml-auto`}
+                          title="Ouvrir les détails du dossier"
                         >
-                          Comparer
+                          Détails
                         </button>
                       </div>
                     </td>
@@ -497,6 +636,129 @@ export default function DossiersList() {
                   </tr>
                 );
               })
+            ) : (
+              groupedEntries.map(([ppd, rows]) => {
+                const nb = rows.length;
+                const ok = rows.filter((r) => r.statut_final === "FACTURABLE").length;
+                const av = rows.filter((r) => r.statut_final === "A_VERIFIER").length;
+
+                return (
+                  <tr key={ppd} className="border-t">
+                    <td colSpan={17} className="p-0">
+                      <div className="px-3 py-2 bg-gray-50 border-b flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-semibold text-gray-900">
+                            PPD: <span className="font-mono">{ppd}</span>
+                          </span>
+                          <span className="text-xs text-gray-600">{nb} dossiers</span>
+                          <span className="text-xs text-green-700">FACTURABLE: {ok}</span>
+                          <span className="text-xs text-orange-700">A_VERIFIER: {av}</span>
+                        </div>
+                      </div>
+
+                      <div className="overflow-auto">
+                        <table className="min-w-[1900px] w-full text-sm">
+                          <tbody>
+                            {rows.map((d) => {
+                              const sf = d.statut_final ?? "NON_FACTURABLE";
+                              const cro = d.statut_croisement ?? "INCONNU";
+                              const terrainLabel = d.mode_passage ? d.mode_passage : "—";
+                              const artVs = d.statut_article_vs_regle ?? "INCONNU";
+
+                              return (
+                                <tr
+                                  key={d.key_match}
+                                  className="border-b hover:bg-gray-50/50 cursor-pointer"
+                                  onClick={() => openDrawer(d)}
+                                  title="Clique pour ouvrir les détails"
+                                >
+                                  <td className="p-3 font-mono w-[160px]">{d.ot_key ?? "—"}</td>
+                                  <td className="p-3 font-mono w-[160px]">{d.nd_global ?? "—"}</td>
+
+                                  <td className="p-3 font-mono w-[160px]">{d.numero_ppd ?? "—"}</td>
+                                  <td className="p-3 w-[160px]">{d.attachement_valide ?? "—"}</td>
+
+                                  <td className="p-3 w-[80px]">{d.activite_code ?? "—"}</td>
+                                  <td className="p-3 w-[80px]">{d.produit_code ?? "—"}</td>
+                                  <td className="p-3 w-[120px]">{d.code_cible ?? "—"}</td>
+
+                                  <td className="p-3 w-[110px]">
+                                    {d.code_cloture_code ? (
+                                      <Badge txt={d.code_cloture_code} kind={clotureKind(d.code_cloture_code)} />
+                                    ) : (
+                                      "—"
+                                    )}
+                                  </td>
+
+                                  <td className="p-3 w-[120px]">
+                                    {d.mode_passage ? (
+                                      <Badge txt={terrainLabel} kind={terrainKind(d.mode_passage)} />
+                                    ) : (
+                                      <span className="text-gray-500">—</span>
+                                    )}
+                                  </td>
+
+                                  <td className="p-3 w-[520px]">
+                                    <div className="max-w-[520px] truncate" title={d.libelle_regle ?? ""}>
+                                      {d.libelle_regle ?? "—"}
+                                    </div>
+                                  </td>
+
+                                  <td className="p-3 w-[140px]">
+                                    <Badge txt={sf.replaceAll("_", " ")} kind={statutFinalKind(sf)} />
+                                  </td>
+
+                                  <td className="p-3 w-[140px]">
+                                    <Badge txt={cro.replaceAll("_", " ")} kind={croisementKind(cro)} />
+                                  </td>
+
+                                  <td className="p-3 w-[140px]">
+                                    {d.statut_praxedo ? (
+                                      <Badge
+                                        txt={praxedoLabel(d)}
+                                        kind={d.statut_praxedo.toLowerCase().includes("valid") ? "green" : "gray"}
+                                      />
+                                    ) : (
+                                      "—"
+                                    )}
+                                  </td>
+
+                                  <td className="p-3 w-[160px]">
+                                    <span className="text-purple-700 font-medium">{pidiLabel(d)}</span>
+                                  </td>
+
+                                  <td className="p-3">
+                                    <div className="flex items-center gap-2 min-w-[210px]">
+                                      <Badge txt={artVs.replaceAll("_", " ")} kind={articleVsKind(artVs)} />
+
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          openDrawer(d);
+                                        }}
+                                        className={`${DETAILS_BTN_CLASS} ml-auto`}
+                                        title="Ouvrir les détails du dossier"
+                                      >
+                                        Détails
+                                      </button>
+                                    </div>
+                                  </td>
+
+                                  <td className="p-3 w-[170px]">{formatFrDate(d.date_planifiee)}</td>
+
+                                  <td className="p-3 w-[40px]">
+                                    <ChevronRight className="h-4 w-4 text-gray-400" />
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -505,13 +767,8 @@ export default function DossiersList() {
       {/* Drawer Détails */}
       {drawerOpen && selected && (
         <div className="fixed inset-0 z-50">
-          {/* overlay */}
-          <div
-            className="absolute inset-0 bg-black/30"
-            onClick={closeDrawer}
-          />
+          <div className="absolute inset-0 bg-black/30" onClick={closeDrawer} />
 
-          {/* panel */}
           <div className="absolute right-0 top-0 h-full w-full max-w-[520px] bg-white shadow-2xl border-l flex flex-col">
             <div className="px-5 py-4 border-b flex items-start justify-between">
               <div className="space-y-1">
@@ -529,37 +786,36 @@ export default function DossiersList() {
                 </div>
               </div>
 
-              <button
-                onClick={closeDrawer}
-                className="text-gray-500 hover:text-gray-800"
-                aria-label="Fermer"
-              >
+              <button onClick={closeDrawer} className="text-gray-500 hover:text-gray-800" aria-label="Fermer">
                 <X className="h-5 w-5" />
               </button>
             </div>
 
             <div className="flex-1 overflow-auto p-5 space-y-5">
-              {/* Résumé */}
               <div className="rounded-lg border bg-white p-4 space-y-3">
                 <SectionTitle title="Résumé" right={<Info className="h-4 w-4 text-gray-400" />} />
                 <div className="space-y-2">
-                  <KeyValue k="Activité / Produit" v={<span className="font-medium">{selected.activite_code ?? "—"} / {selected.produit_code ?? "—"}</span>} />
+                  <KeyValue
+                    k="Activité / Produit"
+                    v={<span className="font-medium">{selected.activite_code ?? "—"} / {selected.produit_code ?? "—"}</span>}
+                  />
                   <KeyValue k="Code cible" v={selected.code_cible ?? "—"} />
-                  <KeyValue k="Clôture" v={selected.code_cloture_code ? <Badge txt={selected.code_cloture_code} kind={clotureKind(selected.code_cloture_code)} /> : "—"} />
+                  <KeyValue k="PPD" v={<span className="font-mono">{selected.numero_ppd ?? "—"}</span>} />
+                  <KeyValue k="Attachement validé" v={selected.attachement_valide ?? "—"} />
+                  <KeyValue
+                    k="Clôture"
+                    v={selected.code_cloture_code ? <Badge txt={selected.code_cloture_code} kind={clotureKind(selected.code_cloture_code)} /> : "—"}
+                  />
                   <KeyValue k="Planifiée" v={formatFrDate(selected.date_planifiee)} />
                   <KeyValue k="Technicien" v={selected.technicien ?? "—"} />
                 </div>
               </div>
 
-              {/* Terrain */}
               <div className="rounded-lg border bg-white p-4 space-y-3">
                 <SectionTitle
                   title="Terrain (PBO / passage)"
                   right={
-                    <button
-                      className="text-xs text-blue-700 hover:underline"
-                      onClick={() => setShowRawTerrain((x) => !x)}
-                    >
+                    <button className="text-xs text-blue-700 hover:underline" onClick={() => setShowRawTerrain((x) => !x)}>
                       {showRawTerrain ? "Masquer texte source" : "Voir texte source"}
                     </button>
                   }
@@ -568,7 +824,13 @@ export default function DossiersList() {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-lg border bg-gray-50 p-3">
                     <div className="text-xs text-gray-500 mb-1">Mode passage</div>
-                    <div className="text-sm font-medium">{selected.mode_passage ?? "—"}</div>
+                    <div className="text-sm font-medium">
+                      {selected.mode_passage ? (
+                        <Badge txt={selected.mode_passage} kind={terrainKind(selected.mode_passage)} />
+                      ) : (
+                        <span className="text-gray-500">—</span>
+                      )}
+                    </div>
                   </div>
                   <div className="rounded-lg border bg-gray-50 p-3">
                     <div className="text-xs text-gray-500 mb-1">Type site</div>
@@ -584,21 +846,16 @@ export default function DossiersList() {
                   <div className="space-y-2">
                     <div className="rounded border bg-gray-50 p-3">
                       <div className="text-xs text-gray-500 mb-1">desc_site (source)</div>
-                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">
-                        {selected.desc_site ?? "—"}
-                      </pre>
+                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">{selected.desc_site ?? "—"}</pre>
                     </div>
                     <div className="rounded border bg-gray-50 p-3">
                       <div className="text-xs text-gray-500 mb-1">description (source)</div>
-                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">
-                        {selected.description ?? "—"}
-                      </pre>
+                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">{selected.description ?? "—"}</pre>
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* Règle */}
               <div className="rounded-lg border bg-white p-4 space-y-3">
                 <SectionTitle title="Règle appliquée" />
                 <div className="space-y-2">
@@ -635,15 +892,11 @@ export default function DossiersList() {
                 </div>
               </div>
 
-              {/* Articles */}
               <div className="rounded-lg border bg-white p-4 space-y-3">
                 <SectionTitle
                   title="Articles (comparaison)"
                   right={
-                    <button
-                      className="text-xs text-blue-700 hover:underline"
-                      onClick={() => openArticles(selected)}
-                    >
+                    <button className="text-xs text-blue-700 hover:underline" onClick={() => openArticles(selected)}>
                       Ouvrir en grand
                     </button>
                   }
@@ -665,7 +918,9 @@ export default function DossiersList() {
                         <div className="text-xs text-gray-500 mb-2">Proposé</div>
                         {selectedCompare.proposed.length ? (
                           <div className="flex flex-wrap gap-1">
-                            {selectedCompare.proposed.map((p) => <Chip key={p} txt={p} />)}
+                            {selectedCompare.proposed.map((p) => (
+                              <Chip key={p} txt={p} />
+                            ))}
                           </div>
                         ) : (
                           <div className="text-sm text-gray-500">—</div>
@@ -676,7 +931,9 @@ export default function DossiersList() {
                         <div className="text-xs text-gray-500 mb-2">Attendus</div>
                         {selectedCompare.expected.length ? (
                           <div className="flex flex-wrap gap-1">
-                            {selectedCompare.expected.map((e) => <Chip key={e} txt={e} />)}
+                            {selectedCompare.expected.map((e) => (
+                              <Chip key={e} txt={e} />
+                            ))}
                           </div>
                         ) : (
                           <div className="text-sm text-gray-500">—</div>
@@ -686,9 +943,7 @@ export default function DossiersList() {
 
                     <div className="rounded border bg-gray-50 p-3">
                       <div className="text-xs text-gray-500 mb-2">Liste articles PIDI (brut)</div>
-                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">
-                        {selected.liste_articles ?? "—"}
-                      </pre>
+                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">{selected.liste_articles ?? "—"}</pre>
                     </div>
                   </>
                 )}
@@ -696,13 +951,8 @@ export default function DossiersList() {
             </div>
 
             <div className="border-t p-4 flex items-center justify-between">
-              <div className="text-xs text-gray-500">
-                Clique une ligne pour changer • ESC pour fermer
-              </div>
-              <button
-                onClick={closeDrawer}
-                className="border rounded px-3 py-2 hover:bg-gray-50"
-              >
+              <div className="text-xs text-gray-500">Clique une ligne pour changer • ESC pour fermer</div>
+              <button onClick={closeDrawer} className="border rounded px-3 py-2 hover:bg-gray-50">
                 Fermer
               </button>
             </div>
@@ -710,7 +960,6 @@ export default function DossiersList() {
         </div>
       )}
 
-      {/* Modal Articles (comparaison dédiée) */}
       {articlesOpen && articlesTarget && modalCompare && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-lg w-full max-w-3xl p-6 space-y-4">
@@ -749,7 +998,9 @@ export default function DossiersList() {
                 <div className="text-xs text-gray-500 mb-2">Articles proposés</div>
                 {modalCompare.proposed.length ? (
                   <div className="flex flex-wrap gap-1">
-                    {modalCompare.proposed.map((p) => <Chip key={p} txt={p} />)}
+                    {modalCompare.proposed.map((p) => (
+                      <Chip key={p} txt={p} />
+                    ))}
                   </div>
                 ) : (
                   <div className="text-sm text-gray-500">—</div>
@@ -760,7 +1011,9 @@ export default function DossiersList() {
                 <div className="text-xs text-gray-500 mb-2">Articles attendus (règle)</div>
                 {modalCompare.expected.length ? (
                   <div className="flex flex-wrap gap-1">
-                    {modalCompare.expected.map((e) => <Chip key={e} txt={e} />)}
+                    {modalCompare.expected.map((e) => (
+                      <Chip key={e} txt={e} />
+                    ))}
                   </div>
                 ) : (
                   <div className="text-sm text-gray-500">—</div>
@@ -770,9 +1023,7 @@ export default function DossiersList() {
 
             <div className="rounded border bg-gray-50 p-3 text-sm">
               <div className="text-xs text-gray-500 mb-2">Liste des articles (PIDI brut)</div>
-              <pre className="whitespace-pre-wrap break-words text-gray-800">
-                {articlesTarget.liste_articles ?? "—"}
-              </pre>
+              <pre className="whitespace-pre-wrap break-words text-gray-800">{articlesTarget.liste_articles ?? "—"}</pre>
             </div>
 
             <div className="flex justify-end gap-2">
