@@ -27,16 +27,10 @@ type BadgeKind =
   | "fuchsia"
   | "lime";
 
-// ✅ Bouton Détails : clair + élégant + pas déjà utilisé (STONE)
-// ✅ Avec ! pour écraser un éventuel style global noir
+// ✅ On force la couleur via CSS (immédiat, même si Tailwind purge / override)
+// ✅ DETAILS_BTN_CLASS = layout only, le style couleur vient du CSS ciblé [data-details-btn]
 const DETAILS_BTN_CLASS =
-  "inline-flex items-center justify-center rounded-md " +
-  "!border !border-stone-200 !bg-stone-50 " +
-  "px-2.5 py-1 text-[11px] font-semibold " +
-  "!text-stone-800 whitespace-nowrap " +
-  "shadow-sm transition-colors " +
-  "hover:!bg-stone-100 hover:!border-stone-300 " +
-  "focus:outline-none focus:ring-2 focus:ring-stone-200 focus:ring-offset-1";
+  "inline-flex items-center justify-center rounded-md px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap shadow-sm transition-colors";
 
 function badgeClass(kind: BadgeKind) {
   switch (kind) {
@@ -128,9 +122,9 @@ function praxedoLabel(d: DossierFacturable) {
 
 function terrainKind(mode?: string | null): BadgeKind {
   const m = (mode ?? "").toUpperCase();
-  if (m.includes("IMM")) return "indigo";     // IMMEUBLE
-  if (m.includes("SOUT")) return "cyan";      // SOUTERRAIN
-  if (m.includes("AER")) return "fuchsia";    // AERIEN
+  if (m.includes("IMM")) return "indigo"; // IMMEUBLE
+  if (m.includes("SOUT")) return "cyan"; // SOUTERRAIN
+  if (m.includes("AER")) return "fuchsia"; // AERIEN
   return "slate";
 }
 
@@ -306,7 +300,6 @@ export default function DossiersList() {
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [items]);
 
-  // ✅ PPD: compter seulement les dossiers PIDI
   const countByPpd = useMemo(() => {
     const m = new Map<string, number>();
     for (const it of items) {
@@ -413,6 +406,33 @@ export default function DossiersList() {
 
   return (
     <div className="space-y-4">
+      {/* ✅ CSS FORCÉ pour le bouton Détails (immédiat, même si Tailwind override) */}
+<style jsx>{`
+  [data-details-btn] {
+    background: #f36868;
+    border: 1px solid #f36868;
+    color: #ffffff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+
+  [data-details-btn]:hover {
+    background: #d65c5c;     /* un peu plus foncé */
+    border-color: #d65c5c;
+  }
+
+  [data-details-btn]:active {
+    transform: translateY(0.5px);
+  }
+
+  [data-details-btn]:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(243, 104, 104, 0.45), 0 0 0 4px #ffffff;
+  }
+`}</style>
+
       <FiltersBar onSearch={(f) => load(f)} loading={loading} statuts={statutsFinal} ppds={ppdOptions} />
 
       {error && <div className="mx-2 p-2 rounded border border-red-200 bg-red-50 text-sm text-red-700">{error}</div>}
@@ -620,6 +640,7 @@ export default function DossiersList() {
                             e.stopPropagation();
                             openDrawer(d);
                           }}
+                          data-details-btn
                           className={`${DETAILS_BTN_CLASS} ml-auto`}
                           title="Ouvrir les détails du dossier"
                         >
@@ -736,6 +757,7 @@ export default function DossiersList() {
                                           e.stopPropagation();
                                           openDrawer(d);
                                         }}
+                                        data-details-btn
                                         className={`${DETAILS_BTN_CLASS} ml-auto`}
                                         title="Ouvrir les détails du dossier"
                                       >
@@ -780,9 +802,18 @@ export default function DossiersList() {
                 </div>
 
                 <div className="flex flex-wrap gap-2 pt-1">
-                  <Badge txt={(selected.statut_final ?? "—").replaceAll("_", " ")} kind={statutFinalKind(selected.statut_final)} />
-                  <Badge txt={(selected.statut_croisement ?? "INCONNU").replaceAll("_", " ")} kind={croisementKind(selected.statut_croisement)} />
-                  <Badge txt={(selected.statut_article_vs_regle ?? "INCONNU").replaceAll("_", " ")} kind={articleVsKind(selected.statut_article_vs_regle)} />
+                  <Badge
+                    txt={(selected.statut_final ?? "—").replaceAll("_", " ")}
+                    kind={statutFinalKind(selected.statut_final)}
+                  />
+                  <Badge
+                    txt={(selected.statut_croisement ?? "INCONNU").replaceAll("_", " ")}
+                    kind={croisementKind(selected.statut_croisement)}
+                  />
+                  <Badge
+                    txt={(selected.statut_article_vs_regle ?? "INCONNU").replaceAll("_", " ")}
+                    kind={articleVsKind(selected.statut_article_vs_regle)}
+                  />
                 </div>
               </div>
 
@@ -797,14 +828,24 @@ export default function DossiersList() {
                 <div className="space-y-2">
                   <KeyValue
                     k="Activité / Produit"
-                    v={<span className="font-medium">{selected.activite_code ?? "—"} / {selected.produit_code ?? "—"}</span>}
+                    v={
+                      <span className="font-medium">
+                        {selected.activite_code ?? "—"} / {selected.produit_code ?? "—"}
+                      </span>
+                    }
                   />
                   <KeyValue k="Code cible" v={selected.code_cible ?? "—"} />
                   <KeyValue k="PPD" v={<span className="font-mono">{selected.numero_ppd ?? "—"}</span>} />
                   <KeyValue k="Attachement validé" v={selected.attachement_valide ?? "—"} />
                   <KeyValue
                     k="Clôture"
-                    v={selected.code_cloture_code ? <Badge txt={selected.code_cloture_code} kind={clotureKind(selected.code_cloture_code)} /> : "—"}
+                    v={
+                      selected.code_cloture_code ? (
+                        <Badge txt={selected.code_cloture_code} kind={clotureKind(selected.code_cloture_code)} />
+                      ) : (
+                        "—"
+                      )
+                    }
                   />
                   <KeyValue k="Planifiée" v={formatFrDate(selected.date_planifiee)} />
                   <KeyValue k="Technicien" v={selected.technicien ?? "—"} />

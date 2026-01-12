@@ -24,3 +24,11 @@ module.exports = {
   },
   plugins: [],
 };
+safelist: [
+  "bg-pink-50",
+  "bg-pink-100",
+  "border-pink-200",
+  "border-pink-300",
+  "text-pink-900",
+  "ring-pink-200",
+]
