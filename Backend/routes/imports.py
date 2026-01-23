@@ -1,3 +1,4 @@
+# Backend/routes/imports.py
 from __future__ import annotations
 
 import os
@@ -245,18 +246,19 @@ def _resolve_delimiter(delimiter_q: str | None, delimiter_form: str | None) -> s
 @router.post("/praxedo")
 async def import_praxedo(
     file: UploadFile = File(...),
+    delimiter_q: str | None = Query(None),
     delimiter: str = Form(";"),
     db: Session = Depends(get_db),
 ):
     try:
-        eff_delim = _detect_delimiter(file, delimiter)
+        d0 = _resolve_delimiter(delimiter_q, delimiter)
+        eff_delim = _detect_delimiter(file, d0)
         raw_headers, norm_headers, reader = _read_header_and_reader(file, eff_delim)
         _require_file_type("PRAXEDO", norm_headers)
 
         rows = 0
         ds_non_null = 0
         now = datetime.utcnow()
-
 
         for idx, raw_row in enumerate(reader):
             if not raw_row:
@@ -281,11 +283,6 @@ async def import_praxedo(
 
             if ds:
                 ds_non_null += 1
-
-            if DEBUG_IMPORTS and idx < 2:
-                print("PRAX headers norm:", norm_headers)
-                print("PRAX ds sample:", (ds or "")[:120])
-                print("PRAX desc sample:", (desc or "")[:120])
 
             obj_payload = {
                 "numero": numero,
@@ -319,11 +316,13 @@ async def import_praxedo(
 @router.post("/pidi")
 async def import_pidi(
     file: UploadFile = File(...),
+    delimiter_q: str | None = Query(None),
     delimiter: str = Form(";"),
     db: Session = Depends(get_db),
 ):
     try:
-        eff_delim = _detect_delimiter(file, delimiter)
+        d0 = _resolve_delimiter(delimiter_q, delimiter)
+        eff_delim = _detect_delimiter(file, d0)
         raw_headers, norm_headers, reader = _read_header_and_reader(file, eff_delim)
         _require_file_type("PIDI", norm_headers)
 
@@ -355,8 +354,8 @@ async def import_pidi(
                     "code_gestion_chantier": None,
                     "agence": None,
                     "liste_articles": None,
-                    "numero_ppd": None,            # ✅
-                    "attachement_valide": None,    # ✅
+                    "numero_ppd": None,
+                    "attachement_valide": None,
                     "imported_at": now,
                 }
                 agg[dossier_key] = rec
@@ -404,8 +403,8 @@ async def import_pidi(
                 "code_gestion_chantier": rec.get("code_gestion_chantier"),
                 "agence": rec.get("agence"),
                 "liste_articles": rec.get("liste_articles"),
-                "numero_ppd": rec.get("numero_ppd"),                 # ✅
-                "attachement_valide": rec.get("attachement_valide"), # ✅
+                "numero_ppd": rec.get("numero_ppd"),
+                "attachement_valide": rec.get("attachement_valide"),
                 "imported_at": now,
             }
 

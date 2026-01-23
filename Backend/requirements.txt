@@ -6,3 +6,4 @@ python-dotenv==1.0.1
 pydantic>=2.5
 pydantic-settings>=2.1
 python-multipart 
+openpyxl==3.1.5

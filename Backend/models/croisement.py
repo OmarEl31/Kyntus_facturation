@@ -1,4 +1,4 @@
-
+#backend/models/croisement.py
 from sqlalchemy import Column, String, DateTime, text
 from sqlalchemy.orm import declarative_base
 

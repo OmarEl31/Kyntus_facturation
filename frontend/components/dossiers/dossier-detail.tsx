@@ -1,3 +1,4 @@
+//frontend/components/dossiers/dossier-detail.tsx
 "use client"
 
 import { useEffect, useState } from "react"

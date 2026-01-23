@@ -68,5 +68,6 @@ export interface DossierFacturable {
   statut_article_vs_regle?: StatutArticleVsRegle | null;
   numero_ppd?: string | null;
   attachement_valide?: string | null;
+  articles_app?: string | null; // ✅ ajouté (parse PIDI côté backend)
 
 }

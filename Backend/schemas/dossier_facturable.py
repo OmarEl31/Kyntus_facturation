@@ -66,5 +66,8 @@ class DossierFacturable(BaseModel):
     regle_articles_attendus: Optional[Any] = None
     statut_article_vs_regle: Optional[str] = None
 
+    # ✅ CE QUI MANQUAIT : parse PIDI calculé côté backend
+    articles_app: Optional[str] = None
+
     class Config:
         from_attributes = True
