@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from core.config import get_settings
 from routes.dossiers import router as dossiers_router
 from routes.imports import router as imports_router
+from routes.export_dossiers import router as export_dossiers_router
 from routes.regles import router as regles_router
 from routes.debug_db import router as debug_router
 
@@ -22,6 +23,8 @@ app.add_middleware(
 
 app.include_router(dossiers_router)
 app.include_router(imports_router)
+app.include_router(export_dossiers_router)
+
 app.include_router(regles_router)
 app.include_router(debug_router)
 

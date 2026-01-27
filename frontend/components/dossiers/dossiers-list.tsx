@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw, Upload, Download, X, ChevronRight, Info, Layers } from "lucide-react";
 
-import { listDossiers, statutsFinal } from "@/services/dossiersApi";
+import { listDossiers, statutsFinal, exportDossiersXlsx } from "@/services/dossiersApi";
 import type { DossierFacturable } from "@/types/dossier";
 import type { DossiersFilters } from "@/services/dossiersApi";
 
@@ -27,8 +27,6 @@ type BadgeKind =
   | "fuchsia"
   | "lime";
 
-// ✅ On force la couleur via CSS (immédiat, même si Tailwind purge / override)
-// ✅ DETAILS_BTN_CLASS = layout only, le style couleur vient du CSS ciblé [data-details-btn]
 const DETAILS_BTN_CLASS =
   "inline-flex items-center justify-center rounded-md px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap shadow-sm transition-colors";
 
@@ -46,7 +44,6 @@ function badgeClass(kind: BadgeKind) {
       return "bg-sky-100 text-sky-800";
     case "orange":
       return "bg-orange-100 text-orange-900";
-
     case "indigo":
       return "bg-indigo-100 text-indigo-800";
     case "teal":
@@ -55,14 +52,12 @@ function badgeClass(kind: BadgeKind) {
       return "bg-rose-100 text-rose-800";
     case "slate":
       return "bg-slate-100 text-slate-800";
-
     case "cyan":
       return "bg-cyan-100 text-cyan-900";
     case "fuchsia":
       return "bg-fuchsia-100 text-fuchsia-900";
     case "lime":
       return "bg-lime-100 text-lime-900";
-
     default:
       return "bg-gray-100 text-gray-800";
   }
@@ -122,9 +117,9 @@ function praxedoLabel(d: DossierFacturable) {
 
 function terrainKind(mode?: string | null): BadgeKind {
   const m = (mode ?? "").toUpperCase();
-  if (m.includes("IMM")) return "indigo"; // IMMEUBLE
-  if (m.includes("SOUT")) return "cyan"; // SOUTERRAIN
-  if (m.includes("AER")) return "fuchsia"; // AERIEN
+  if (m.includes("IMM")) return "indigo";
+  if (m.includes("SOUT")) return "cyan";
+  if (m.includes("AER")) return "fuchsia";
   return "slate";
 }
 
@@ -139,6 +134,14 @@ function parseCsvList(v?: string | null): string[] {
   if (!v) return [];
   return String(v)
     .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function parsePipeList(v?: string | null): string[] {
+  if (!v) return [];
+  return String(v)
+    .split("|")
     .map((x) => x.trim())
     .filter(Boolean);
 }
@@ -243,6 +246,7 @@ export default function DossiersList() {
         const data = await listDossiers(activeFilters);
         setRawItems(data);
 
+        // NOTE: le backend filtre déjà par ppd; ce filtre front reste OK mais redondant
         const ppdNeedle = (activeFilters.ppd ?? "").trim();
         const filtered =
           ppdNeedle.length > 0
@@ -321,49 +325,12 @@ export default function DossiersList() {
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [items]);
 
-  function exportCSV() {
+  async function exportExcel() {
     setExporting(true);
     try {
-      const headers = [
-        "ot_key",
-        "nd_global",
-        "numero_ppd",
-        "attachement_valide",
-        "activite_code",
-        "produit_code",
-        "code_cible",
-        "code_cloture_code",
-        "regle_code",
-        "libelle_regle",
-        "statut_final",
-        "statut_croisement",
-        "statut_praxedo",
-        "statut_pidi",
-        "mode_passage",
-        "type_site_terrain",
-        "type_pbo_terrain",
-        "article_facturation_propose",
-        "statut_article_vs_regle",
-        "date_planifiee",
-      ];
-
-      const rows = items.map((d) =>
-        headers
-          .map((h) => {
-            const v = (d as any)[h];
-            const s = v === null || v === undefined ? "" : Array.isArray(v) ? JSON.stringify(v) : String(v);
-            return `"${s.replace(/"/g, '""')}"`;
-          })
-          .join(",")
-      );
-
-      const csv = [headers.join(","), ...rows].join("\n");
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `dossiers_${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
-      URL.revokeObjectURL(a.href);
+      await exportDossiersXlsx(filters);
+    } catch (e: any) {
+      setError(e?.message || "Export Excel échoué.");
     } finally {
       setExporting(false);
     }
@@ -386,52 +353,57 @@ export default function DossiersList() {
     setShowRawTerrain(false);
   }
 
+  // ✅ IMPORTANT :
+  // - "article_facturation_propose" = articles terrain (LSIM1, LSIMP, etc.)
+  // - "articles_app" = parse PIDI (celle que tu veux voir à l’export + écran)
   const selectedCompare = useMemo(() => {
     if (!selected) return null;
-    const proposed = uniq(parseCsvList(selected.article_facturation_propose));
+
+    const proposedTerrain = uniq(parseCsvList(selected.article_facturation_propose));
     const expected = uniq((selected.regle_articles_attendus ?? []).map((x) => String(x).trim()).filter(Boolean));
-    const verdict = computeArticleVerdict(proposed, expected);
-    return { proposed, expected, verdict };
+    const verdict = computeArticleVerdict(proposedTerrain, expected);
+
+    const pidiParsed = uniq(parsePipeList((selected as any).articles_app ?? null));
+    return { proposedTerrain, expected, verdict, pidiParsed };
   }, [selected]);
 
   const modalCompare = useMemo(() => {
     if (!articlesTarget) return null;
-    const proposed = uniq(parseCsvList(articlesTarget.article_facturation_propose));
+
+    const proposedTerrain = uniq(parseCsvList(articlesTarget.article_facturation_propose));
     const expected = uniq((articlesTarget.regle_articles_attendus ?? []).map((x) => String(x).trim()).filter(Boolean));
-    const verdict = computeArticleVerdict(proposed, expected);
-    return { proposed, expected, verdict };
+    const verdict = computeArticleVerdict(proposedTerrain, expected);
+
+    const pidiParsed = uniq(parsePipeList((articlesTarget as any).articles_app ?? null));
+    return { proposedTerrain, expected, verdict, pidiParsed };
   }, [articlesTarget]);
 
   const groupedEntries = useMemo(() => groupByPpd(items), [items]);
 
   return (
     <div className="space-y-4">
-      {/* ✅ CSS FORCÉ pour le bouton Détails (immédiat, même si Tailwind override) */}
-<style jsx>{`
-  [data-details-btn] {
-    background: #f36868;
-    border: 1px solid #f36868;
-    color: #ffffff;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-  }
-
-  [data-details-btn]:hover {
-    background: #d65c5c;     /* un peu plus foncé */
-    border-color: #d65c5c;
-  }
-
-  [data-details-btn]:active {
-    transform: translateY(0.5px);
-  }
-
-  [data-details-btn]:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px rgba(243, 104, 104, 0.45), 0 0 0 4px #ffffff;
-  }
-`}</style>
+      <style jsx>{`
+        [data-details-btn] {
+          background: #f36868;
+          border: 1px solid #f36868;
+          color: #ffffff;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+        }
+        [data-details-btn]:hover {
+          background: #d65c5c;
+          border-color: #d65c5c;
+        }
+        [data-details-btn]:active {
+          transform: translateY(0.5px);
+        }
+        [data-details-btn]:focus-visible {
+          outline: none;
+          box-shadow: 0 0 0 2px rgba(243, 104, 104, 0.45), 0 0 0 4px #ffffff;
+        }
+      `}</style>
 
       <FiltersBar onSearch={(f) => load(f)} loading={loading} statuts={statutsFinal} ppds={ppdOptions} />
 
@@ -475,13 +447,15 @@ export default function DossiersList() {
             PIDI
           </button>
 
+          {/* ✅ Export Excel via backend */}
           <button
-            onClick={exportCSV}
+            onClick={exportExcel}
             disabled={exporting || items.length === 0}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
+            className="inline-flex items-center gap-2 px-3 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+            title="Exporter en Excel (xlsx)"
           >
             <Download className="h-4 w-4" />
-            Exporter CSV
+            {exporting ? "Export…" : "Exporter Excel"}
           </button>
         </div>
       </div>
@@ -948,18 +922,18 @@ export default function DossiersList() {
                     <div className="flex items-center gap-2">
                       <Badge txt={selectedCompare.verdict} kind={articleVsKind(selectedCompare.verdict)} />
                       <div className="text-sm text-gray-700">
-                        {selectedCompare.verdict === "OK" && "Les articles proposés matchent la règle."}
-                        {selectedCompare.verdict === "A_VERIFIER" && "Au moins un article proposé ne match pas les attendus."}
-                        {selectedCompare.verdict === "INCONNU" && "Pas d’articles attendus sur la règle."}
+                        {selectedCompare.verdict === "OK" && "Les articles terrain matchent la règle."}
+                        {selectedCompare.verdict === "A_VERIFIER" && "Mismatch terrain vs règle."}
+                        {selectedCompare.verdict === "INCONNU" && "Règle sans attendus."}
                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
                       <div className="rounded-lg border bg-gray-50 p-3">
-                        <div className="text-xs text-gray-500 mb-2">Proposé</div>
-                        {selectedCompare.proposed.length ? (
+                        <div className="text-xs text-gray-500 mb-2">Terrain (proposé)</div>
+                        {selectedCompare.proposedTerrain.length ? (
                           <div className="flex flex-wrap gap-1">
-                            {selectedCompare.proposed.map((p) => (
+                            {selectedCompare.proposedTerrain.map((p) => (
                               <Chip key={p} txt={p} />
                             ))}
                           </div>
@@ -969,7 +943,7 @@ export default function DossiersList() {
                       </div>
 
                       <div className="rounded-lg border bg-gray-50 p-3">
-                        <div className="text-xs text-gray-500 mb-2">Attendus</div>
+                        <div className="text-xs text-gray-500 mb-2">Attendus (règle)</div>
                         {selectedCompare.expected.length ? (
                           <div className="flex flex-wrap gap-1">
                             {selectedCompare.expected.map((e) => (
@@ -980,6 +954,19 @@ export default function DossiersList() {
                           <div className="text-sm text-gray-500">—</div>
                         )}
                       </div>
+                    </div>
+
+                    <div className="rounded border bg-gray-50 p-3">
+                      <div className="text-xs text-gray-500 mb-2">Articles APP (parse PIDI)</div>
+                      {selectedCompare.pidiParsed.length ? (
+                        <div className="flex flex-wrap gap-1">
+                          {selectedCompare.pidiParsed.map((a) => (
+                            <Chip key={a} txt={a} />
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-gray-500">—</div>
+                      )}
                     </div>
 
                     <div className="rounded border bg-gray-50 p-3">
@@ -1028,18 +1015,18 @@ export default function DossiersList() {
             <div className="flex items-center gap-2">
               <Badge txt={modalCompare.verdict} kind={articleVsKind(modalCompare.verdict)} />
               <div className="text-sm text-gray-700">
-                {modalCompare.verdict === "OK" && "Match OK."}
-                {modalCompare.verdict === "A_VERIFIER" && "Mismatch / à contrôler."}
+                {modalCompare.verdict === "OK" && "Terrain vs règle: OK."}
+                {modalCompare.verdict === "A_VERIFIER" && "Terrain vs règle: mismatch / à contrôler."}
                 {modalCompare.verdict === "INCONNU" && "Règle sans attendus."}
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="rounded-lg border bg-gray-50 p-4">
-                <div className="text-xs text-gray-500 mb-2">Articles proposés</div>
-                {modalCompare.proposed.length ? (
+                <div className="text-xs text-gray-500 mb-2">Terrain (proposé)</div>
+                {modalCompare.proposedTerrain.length ? (
                   <div className="flex flex-wrap gap-1">
-                    {modalCompare.proposed.map((p) => (
+                    {modalCompare.proposedTerrain.map((p) => (
                       <Chip key={p} txt={p} />
                     ))}
                   </div>
@@ -1049,7 +1036,7 @@ export default function DossiersList() {
               </div>
 
               <div className="rounded-lg border bg-gray-50 p-4">
-                <div className="text-xs text-gray-500 mb-2">Articles attendus (règle)</div>
+                <div className="text-xs text-gray-500 mb-2">Attendus (règle)</div>
                 {modalCompare.expected.length ? (
                   <div className="flex flex-wrap gap-1">
                     {modalCompare.expected.map((e) => (
@@ -1060,6 +1047,19 @@ export default function DossiersList() {
                   <div className="text-sm text-gray-500">—</div>
                 )}
               </div>
+            </div>
+
+            <div className="rounded border bg-gray-50 p-3">
+              <div className="text-xs text-gray-500 mb-2">Articles APP (parse PIDI)</div>
+              {modalCompare.pidiParsed.length ? (
+                <div className="flex flex-wrap gap-1">
+                  {modalCompare.pidiParsed.map((a) => (
+                    <Chip key={a} txt={a} />
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">—</div>
+              )}
             </div>
 
             <div className="rounded border bg-gray-50 p-3 text-sm">
