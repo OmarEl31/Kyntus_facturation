@@ -1,7 +1,7 @@
 // frontend/components/dossiers/dossiers-list.tsx
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { RefreshCw, Upload, Download, X, ChevronRight, Info, Layers } from "lucide-react";
 
 import { listDossiers, statutsFinal, exportDossiersXlsx } from "@/services/dossiersApi";
@@ -123,6 +123,23 @@ function terrainKind(mode?: string | null): BadgeKind {
   return "slate";
 }
 
+function parsePidiBrutCodes(v?: string | null): string[] {
+  if (!v) return [];
+  const s = String(v).toUpperCase();
+
+  // capture des codes type SAVC1 / LSOU1 / PSER1 / RJRT1 etc.
+  const matches = s.match(/\b[A-Z]{2,}[A-Z0-9]{0,12}\b/g) ?? [];
+
+  return Array.from(
+    new Set(
+      matches
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .filter((x) => x !== "PIDI" && x !== "BRUT")
+    )
+  );
+}
+
 function articleVsKind(s?: string | null): BadgeKind {
   if (s === "OK") return "green";
   if (s === "A_VERIFIER") return "orange";
@@ -146,6 +163,14 @@ function parsePipeList(v?: string | null): string[] {
     .filter(Boolean);
 }
 
+function parseAnyList(v?: string | null): string[] {
+  if (!v) return [];
+  return String(v)
+    .split(/[,|]/g)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
 function uniq(arr: string[]) {
   return Array.from(new Set(arr));
 }
@@ -164,7 +189,7 @@ function Chip({ txt }: { txt: string }) {
   );
 }
 
-function SectionTitle({ title, right }: { title: string; right?: React.ReactNode }) {
+function SectionTitle({ title, right }: { title: string; right?: ReactNode }) {
   return (
     <div className="flex items-center justify-between">
       <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
@@ -173,7 +198,7 @@ function SectionTitle({ title, right }: { title: string; right?: React.ReactNode
   );
 }
 
-function KeyValue({ k, v }: { k: string; v: React.ReactNode }) {
+function KeyValue({ k, v }: { k: string; v: ReactNode }) {
   return (
     <div className="grid grid-cols-3 gap-2 text-sm">
       <div className="text-gray-500">{k}</div>
@@ -246,7 +271,6 @@ export default function DossiersList() {
         const data = await listDossiers(activeFilters);
         setRawItems(data);
 
-        // NOTE: le backend filtre déjà par ppd; ce filtre front reste OK mais redondant
         const ppdNeedle = (activeFilters.ppd ?? "").trim();
         const filtered =
           ppdNeedle.length > 0
@@ -353,29 +377,30 @@ export default function DossiersList() {
     setShowRawTerrain(false);
   }
 
-  // ✅ IMPORTANT :
-  // - "article_facturation_propose" = articles terrain (LSIM1, LSIMP, etc.)
-  // - "articles_app" = parse PIDI (celle que tu veux voir à l’export + écran)
-  const selectedCompare = useMemo(() => {
-    if (!selected) return null;
-
-    const proposedTerrain = uniq(parseCsvList(selected.article_facturation_propose));
-    const expected = uniq((selected.regle_articles_attendus ?? []).map((x) => String(x).trim()).filter(Boolean));
-    const verdict = computeArticleVerdict(proposedTerrain, expected);
-
-    const pidiParsed = uniq(parsePipeList((selected as any).articles_app ?? null));
-    return { proposedTerrain, expected, verdict, pidiParsed };
+  // ✅ Articles “APP” = parse PIDI brut (liste_articles)
+  const selectedPidiCodes = useMemo(() => {
+    if (!selected) return [];
+    return parsePidiBrutCodes(selected.liste_articles);
   }, [selected]);
 
+  // ✅ Modal compare (Terrain vs règle + parse PIDI)
   const modalCompare = useMemo(() => {
     if (!articlesTarget) return null;
 
-    const proposedTerrain = uniq(parseCsvList(articlesTarget.article_facturation_propose));
-    const expected = uniq((articlesTarget.regle_articles_attendus ?? []).map((x) => String(x).trim()).filter(Boolean));
+    // Terrain proposé : champ backend (selon ton modèle). On essaye plusieurs noms possibles.
+    const terrainRaw =
+      ((articlesTarget as any).article_facturation_propose as string | null | undefined) ??
+      ((articlesTarget as any).articles_facturation_propose as string | null | undefined) ??
+      ((articlesTarget as any).articles_terrain as string | null | undefined) ??
+      null;
+
+    const proposedTerrain = uniq(parseAnyList(terrainRaw).map((x) => x.toUpperCase()));
+    const expected = uniq((articlesTarget.regle_articles_attendus ?? []).map((x) => String(x).toUpperCase()));
+    const pidiParsed = parsePidiBrutCodes(articlesTarget.liste_articles);
+
     const verdict = computeArticleVerdict(proposedTerrain, expected);
 
-    const pidiParsed = uniq(parsePipeList((articlesTarget as any).articles_app ?? null));
-    return { proposedTerrain, expected, verdict, pidiParsed };
+    return { proposedTerrain, expected, pidiParsed, verdict };
   }, [articlesTarget]);
 
   const groupedEntries = useMemo(() => groupByPpd(items), [items]);
@@ -447,7 +472,6 @@ export default function DossiersList() {
             PIDI
           </button>
 
-          {/* ✅ Export Excel via backend */}
           <button
             onClick={exportExcel}
             disabled={exporting || items.length === 0}
@@ -909,7 +933,7 @@ export default function DossiersList() {
 
               <div className="rounded-lg border bg-white p-4 space-y-3">
                 <SectionTitle
-                  title="Articles (comparaison)"
+                  title="Articles PIDI (brut)"
                   right={
                     <button className="text-xs text-blue-700 hover:underline" onClick={() => openArticles(selected)}>
                       Ouvrir en grand
@@ -917,69 +941,29 @@ export default function DossiersList() {
                   }
                 />
 
-                {selectedCompare && (
-                  <>
-                    <div className="flex items-center gap-2">
-                      <Badge txt={selectedCompare.verdict} kind={articleVsKind(selectedCompare.verdict)} />
-                      <div className="text-sm text-gray-700">
-                        {selectedCompare.verdict === "OK" && "Les articles terrain matchent la règle."}
-                        {selectedCompare.verdict === "A_VERIFIER" && "Mismatch terrain vs règle."}
-                        {selectedCompare.verdict === "INCONNU" && "Règle sans attendus."}
-                      </div>
-                    </div>
+                <div className="rounded border bg-gray-50 p-3">
+                  <div className="text-xs text-gray-500 mb-2">Colonne “liste_articles” (nettoyée)</div>
 
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="rounded-lg border bg-gray-50 p-3">
-                        <div className="text-xs text-gray-500 mb-2">Terrain (proposé)</div>
-                        {selectedCompare.proposedTerrain.length ? (
-                          <div className="flex flex-wrap gap-1">
-                            {selectedCompare.proposedTerrain.map((p) => (
-                              <Chip key={p} txt={p} />
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="text-sm text-gray-500">—</div>
-                        )}
-                      </div>
-
-                      <div className="rounded-lg border bg-gray-50 p-3">
-                        <div className="text-xs text-gray-500 mb-2">Attendus (règle)</div>
-                        {selectedCompare.expected.length ? (
-                          <div className="flex flex-wrap gap-1">
-                            {selectedCompare.expected.map((e) => (
-                              <Chip key={e} txt={e} />
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="text-sm text-gray-500">—</div>
-                        )}
-                      </div>
+                  {selectedPidiCodes.length ? (
+                    <div className="flex flex-wrap gap-1">
+                      {selectedPidiCodes.map((a) => (
+                        <Chip key={a} txt={a} />
+                      ))}
                     </div>
+                  ) : (
+                    <div className="text-sm text-gray-500">—</div>
+                  )}
+                </div>
 
-                    <div className="rounded border bg-gray-50 p-3">
-                      <div className="text-xs text-gray-500 mb-2">Articles APP (parse PIDI)</div>
-                      {selectedCompare.pidiParsed.length ? (
-                        <div className="flex flex-wrap gap-1">
-                          {selectedCompare.pidiParsed.map((a) => (
-                            <Chip key={a} txt={a} />
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-sm text-gray-500">—</div>
-                      )}
-                    </div>
-
-                    <div className="rounded border bg-gray-50 p-3">
-                      <div className="text-xs text-gray-500 mb-2">Liste articles PIDI (brut)</div>
-                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">{selected.liste_articles ?? "—"}</pre>
-                    </div>
-                  </>
-                )}
+                <div className="rounded border bg-gray-50 p-3">
+                  <div className="text-xs text-gray-500 mb-2">Texte source (PIDI brut)</div>
+                  <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">{selected.liste_articles ?? "—"}</pre>
+                </div>
               </div>
             </div>
 
             <div className="border-t p-4 flex items-center justify-between">
-              <div className="text-xs text-gray-500">Clique une ligne pour changer • ESC pour fermer</div>
+              <div className="text-xs text-gray-500">ESC pour fermer</div>
               <button onClick={closeDrawer} className="border rounded px-3 py-2 hover:bg-gray-50">
                 Fermer
               </button>
@@ -988,6 +972,7 @@ export default function DossiersList() {
         </div>
       )}
 
+      {/* Modal Comparer Articles */}
       {articlesOpen && articlesTarget && modalCompare && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-lg w-full max-w-3xl p-6 space-y-4">

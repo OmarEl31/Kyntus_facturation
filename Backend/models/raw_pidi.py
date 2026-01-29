@@ -1,12 +1,11 @@
-# Backend/models/raw_pidi.py
-from sqlalchemy import Column, Text, TIMESTAMP
+from sqlalchemy import Column, Text, TIMESTAMP, Numeric
 from database.connection import Base
 
 class RawPidi(Base):
     __tablename__ = "pidi"
     __table_args__ = {"schema": "raw"}
 
-    # ✅ PK stable (vient du fichier : "N° de flux PIDI")
+    # PK stable : si ton fichier a N° de flux PIDI, on l’utilise
     numero_flux_pidi = Column(Text, primary_key=True)
 
     contrat = Column(Text)
@@ -19,7 +18,12 @@ class RawPidi(Base):
     oeie = Column(Text)
     code_gestion_chantier = Column(Text)
     agence = Column(Text)
-    liste_articles = Column(Text)
-    imported_at = Column(TIMESTAMP)
+
     numero_ppd = Column(Text)
     attachement_valide = Column(Text)
+
+    bordereau = Column(Text, nullable=True)
+    ht = Column(Numeric, nullable=True)
+
+    liste_articles = Column(Text)
+    imported_at = Column(TIMESTAMP)
