@@ -1,14 +1,14 @@
 # Backend/routes/dossiers.py
-from __future__ import annotations
-
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import or_, case
 
 from database.connection import get_db
+from models.dossiers_facturable import VDossierFacturable
 from schemas.dossier_facturable import DossierFacturable
 
 router = APIRouter(prefix="/api/dossiers", tags=["dossiers"])
+
 
 @router.get("", response_model=list[DossierFacturable])
 def get_dossiers(
@@ -18,32 +18,65 @@ def get_dossiers(
     ppd: str | None = None,
     db: Session = Depends(get_db),
 ):
-    sql = text(
-        """
-        SELECT
-            d.*,
-            array_to_string(canonique.parse_articles_piditext(d.liste_articles), ' | ') AS articles_app
-        FROM canonique.v_dossier_facturable d
-        WHERE 1=1
-          AND (
-            :q IS NULL
-            OR d.ot_key ILIKE '%' || :q || '%'
-            OR d.nd_global ILIKE '%' || :q || '%'
-          )
-          AND (:statut IS NULL OR d.statut_final = :statut)
-          AND (:croisement IS NULL OR d.statut_croisement = :croisement)
-          AND (
-            :ppd IS NULL
-            OR COALESCE(d.numero_ppd,'') ILIKE '%' || :ppd || '%'
-          )
-        ORDER BY d.generated_at DESC NULLS LAST
-        """
+    qs = db.query(VDossierFacturable)
+
+    # -----------------------------
+    # Filtre recherche (q)
+    # -----------------------------
+    if q is not None:
+        needle = q.strip()
+        if needle:
+            qs = qs.filter(
+                or_(
+                    VDossierFacturable.ot_key.ilike(f"%{needle}%"),
+                    VDossierFacturable.nd_global.ilike(f"%{needle}%"),
+                    VDossierFacturable.praxedo_ot_key.ilike(f"%{needle}%"),
+                    VDossierFacturable.praxedo_nd.ilike(f"%{needle}%"),
+                )
+            )
+
+    # -----------------------------
+    # Filtres
+    # -----------------------------
+    if statut:
+        qs = qs.filter(VDossierFacturable.statut_final == statut)
+
+    if croisement:
+        qs = qs.filter(VDossierFacturable.statut_croisement == croisement)
+
+    if ppd:
+        qs = qs.filter(VDossierFacturable.numero_ppd == ppd)
+
+    # -----------------------------
+    # TRI "métier" demandé
+    #
+    # 1) FACTURABLE
+    # 2) CONDITIONNEL
+    # 3) NON_FACTURABLE
+    # 4) A_VERIFIER (et autres)
+    #
+    # + Ceux avec CROISEMENT_INCOMPLET tout en bas
+    # -----------------------------
+    statut_rank = case(
+        (VDossierFacturable.statut_final == "FACTURABLE", 1),
+        (VDossierFacturable.statut_final == "CONDITIONNEL", 2),
+        (VDossierFacturable.statut_final == "NON_FACTURABLE", 3),
+        (VDossierFacturable.statut_final == "A_VERIFIER", 4),
+        else_=5,
     )
 
-    rows = db.execute(
-        sql,
-        {"q": q, "statut": statut, "croisement": croisement, "ppd": ppd},
-    ).mappings().all()
+    croisement_incomplet_rank = case(
+        (VDossierFacturable.motif_verification == "CROISEMENT_INCOMPLET", 2),
+        else_=1,
+    )
 
-    # FastAPI/Pydantic accepte une liste de dicts (mappings)
-    return [dict(r) for r in rows]
+    # Tie-breaks stables
+    return (
+        qs.order_by(
+            statut_rank.asc(),
+            croisement_incomplet_rank.asc(),
+            VDossierFacturable.generated_at.desc().nullslast(),
+            VDossierFacturable.key_match.asc(),
+        )
+        .all()
+    )

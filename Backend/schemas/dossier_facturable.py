@@ -1,9 +1,15 @@
 # Backend/schemas/dossier_facturable.py
-from pydantic import BaseModel
-from typing import Optional, Any, List
+from __future__ import annotations
+
 from datetime import datetime
+from typing import Any, Optional, List
+
+from pydantic import BaseModel, ConfigDict
+
 
 class DossierFacturable(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     key_match: str
 
     ot_key: Optional[str] = None
@@ -28,17 +34,12 @@ class DossierFacturable(BaseModel):
     liste_articles: Optional[str] = None
     commentaire_pidi: Optional[str] = None
 
-    # ✅ nouveaux champs
-    numero_ppd: Optional[str] = None
-    attachement_valide: Optional[str] = None
-
     regle_code: Optional[str] = None
     libelle_regle: Optional[str] = None
     condition_sql: Optional[str] = None
     condition_json: Optional[Any] = None
     statut_facturation: Optional[str] = None
     codes_cloture_facturables: Optional[List[str]] = None
-
     type_branchement: Optional[Any] = None
     plp_applicable: Optional[bool] = None
     services: Optional[Any] = None
@@ -56,6 +57,7 @@ class DossierFacturable(BaseModel):
     cloture_facturable: Optional[bool] = None
     generated_at: Optional[datetime] = None
 
+    # terrain
     desc_site: Optional[str] = None
     description: Optional[str] = None
     type_site_terrain: Optional[str] = None
@@ -63,11 +65,13 @@ class DossierFacturable(BaseModel):
     mode_passage: Optional[str] = None
     article_facturation_propose: Optional[str] = None
     statut_article: Optional[str] = None
+
+    # articles
     regle_articles_attendus: Optional[Any] = None
     statut_article_vs_regle: Optional[str] = None
+    numero_ppd: Optional[str] = None
+    attachement_valide: Optional[str] = None
 
-    # ✅ CE QUI MANQUAIT : parse PIDI calculé côté backend
-    articles_app: Optional[str] = None
-
-    class Config:
-        from_attributes = True
+    # ✅ NEW
+    motif_verification: Optional[str] = None
+    is_previsite: Optional[bool] = None

@@ -1,4 +1,3 @@
-#backend/models/raw_praxedo.py
 from sqlalchemy import Column, Text, TIMESTAMP
 from database.connection import Base
 
@@ -19,7 +18,6 @@ class RawPraxedo(Base):
     cp = Column(Text)
     ville_site = Column(Text)
 
-    # ✅ NOUVEAU
     desc_site = Column(Text)
     description = Column(Text)
 
