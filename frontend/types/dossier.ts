@@ -1,9 +1,23 @@
-//frontend/types/dossier.ts
+// frontend/types/dossier.ts
+
 export type StatutFinal = "FACTURABLE" | "CONDITIONNEL" | "NON_FACTURABLE" | "A_VERIFIER";
 
 export type CroisementStatut = "OK" | "ABSENT_PRAXEDO" | "ABSENT_PIDI" | "INCONNU";
 
-export type StatutArticleVsRegle = "OK" | "A_VERIFIER" | "INCONNU";
+export type StatutArticleVsRegle = "OK" | "A_VERIFIER" | "INCONNU" | "NON_APPLICABLE";
+
+// Optionnel mais utile si tu veux typer proprement
+export type StatutArticles = "OK" | "A_VERIFIER" | "INCONNU_REGLE" | "NON_APPLICABLE";
+
+export type MotifVerification =
+  | "PREVISITE"
+  | "CROISEMENT_INCOMPLET"
+  | "ACTPROD_MANQUANT"
+  | "REGLE_MANQUANTE"
+  | "NON_FACTURABLE_REGLE"
+  | "CLOTURE_INVALIDE"
+  | "ARTICLES_MANQUANTS"
+  | "ARTICLES_MISMATCH";
 
 export interface DossierFacturable {
   key_match: string;
@@ -49,10 +63,14 @@ export interface DossierFacturable {
   categorie: string | null;
 
   // Existant
-  statut_articles: string | null;
+  statut_articles: StatutArticles | string | null;
   statut_final: StatutFinal;
   cloture_facturable: boolean | null;
   generated_at: string | null;
+
+  // ✅ NEW (depuis la view SQL)
+  motif_verification?: MotifVerification | string | null;
+  is_previsite?: boolean | null;
 
   // ✅ TERRAIN (PRAX / parsing)
   desc_site?: string | null;
@@ -62,12 +80,14 @@ export interface DossierFacturable {
   mode_passage?: string | null;
 
   // ✅ ARTICLES (comparaison)
-  article_facturation_propose?: string | null;     // ex: "LSIM1,LSIMP"
-  regle_articles_attendus?: string[] | null;       // ex: ["LSA","LSIM","LSOU"] ou ["PSER","PLP"]
-  statut_article?: string | null;                  // si tu l'utilises
+  article_facturation_propose?: string | null; // ex: "LSIM1,LSIMP"
+  regle_articles_attendus?: string[] | null;   // ex: ["LSA","LSIM","LSOU"]
+  statut_article?: string | null;
   statut_article_vs_regle?: StatutArticleVsRegle | null;
+
   numero_ppd?: string | null;
   attachement_valide?: string | null;
-  articles_app?: string | null; // ✅ ajouté (parse PIDI côté backend)
 
+  // ✅ Optionnel: si backend fournit déjà une version parsée/canon
+  articles_app?: string[] | string | null;
 }

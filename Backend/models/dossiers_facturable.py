@@ -19,7 +19,7 @@ class VDossierFacturable(Base):
     produit_code = Column(Text)
     code_cloture_code = Column(Text)
     statut_praxedo = Column(Text)
-    date_planifiee = Column(Text)  # ⚠️ text (comme ta view)
+    date_planifiee = Column(Text)  # text
     date_cloture = Column(TIMESTAMP)
     technicien = Column(Text)
     commentaire_praxedo = Column(Text)
@@ -55,7 +55,7 @@ class VDossierFacturable(Base):
     cloture_facturable = Column(Boolean)
     generated_at = Column(TIMESTAMP)
 
-    # ✅ Terrain (depuis PRAX / desc_site & description)
+    # ✅ Terrain
     desc_site = Column(Text)
     description = Column(Text)
     type_site_terrain = Column(Text)
@@ -64,8 +64,12 @@ class VDossierFacturable(Base):
     article_facturation_propose = Column(Text)
     statut_article = Column(Text)
 
-    # ✅ Nouveau : contrôle terrain vs règle
+    # ✅ Articles
     regle_articles_attendus = Column(JSONB)
     statut_article_vs_regle = Column(Text)
     numero_ppd = Column(Text)
     attachement_valide = Column(Text)
+
+    # ✅ NEW (depuis la view SQL)
+    motif_verification = Column(Text)
+    is_previsite = Column(Boolean)
