@@ -81,6 +81,15 @@ function formatFrDate(v?: string | null) {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+function asStringArray(v: any): string[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.map((x) => String(x));
+  if (typeof v === "string") return v.split(/[,|]/g).map((x) => x.trim()).filter(Boolean);
+  if (typeof v === "object") {
+    if (Array.isArray(v.articles)) return v.articles.map((x: any) => String(x));
+  }
+  return [];
+}
 
 function croisementKind(s?: string | null): BadgeKind {
   if (s === "OK") return "green";
@@ -268,6 +277,107 @@ function groupByPpd(items: DossierFacturable[]) {
 
   return entries;
 }
+function normArticleLikeDb(input?: any): string {
+  if (input == null) return "";
+  const s0 = String(input).toUpperCase().trim();
+
+  // retire "1.0", "2.0", etc. au début (comme ta fonction SQL)
+  const s1 = s0.replace(/^[0-9]+(\.[0-9]+)?\s*/g, "");
+
+  // ne garder que A-Z 0-9
+  const s2 = s1.replace(/[^A-Z0-9]+/g, "");
+  return s2;
+}
+
+function fam4(code: string): string {
+  const n = normArticleLikeDb(code);
+  if (!n) return "";
+  return n.length >= 4 ? n.slice(0, 4) : n;
+}
+
+/**
+ * Convertit regle_articles_attendus (jsonb) => string[]
+ * Supporte:
+ * - ["LSA","LSAFK",...]
+ * - { articles: ["ACCÈS", "LSAX + LSAK", ...] }
+ * - string JSON
+ * - string simple "LSA,LSAFK"
+ */
+function parseRegleAttendus(v: any): string[] {
+  if (!v) return [];
+  // array JSON
+  if (Array.isArray(v)) return v.map(String);
+  // objet {articles:[...]}
+  if (typeof v === "object" && Array.isArray(v.articles)) return v.articles.map(String);
+  // string: peut être JSON ou CSV
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return [];
+    // essayer de parser comme JSON
+    if (s.startsWith('[') || s.startsWith('{')) {
+      try {
+        const j = JSON.parse(s);
+        return parseRegleAttendus(j); // récursif
+      } catch {
+        // pas du JSON valide, continuer
+      }
+    }
+    // fallback: split CSV
+    return s.split(/[,|;]/g).map((x) => x.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function parseTerrainPropose(raw?: string | null): string[] {
+  if (!raw) return [];
+  return raw
+    .split(/[\r\n,;|]+/g)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function parsePidiCodesNormalized(v?: string | null): string[] {
+  if (!v) return [];
+  const s = String(v).toUpperCase();
+
+  // récupère tokens type article
+  const matches = s.match(/\b[A-Z]{2,}[A-Z0-9]{0,12}\b/g) ?? [];
+  const cleaned = matches
+    .map((x) => normArticleLikeDb(x))
+    .filter(Boolean)
+    .filter((x) => x !== "PIDI" && x !== "BRUT");
+
+  return Array.from(new Set(cleaned));
+}
+
+type ArticleVerdict = "OK" | "A_VERIFIER" | "PARTIEL" | "INCONNU";
+
+function computeFamVerdict(expectedCodes: string[], proposedCodes: string[]): ArticleVerdict {
+  const exp = Array.from(new Set(expectedCodes.map(fam4).filter(Boolean)));
+  const prop = Array.from(new Set(proposedCodes.map(fam4).filter(Boolean)));
+
+  if (exp.length === 0) return "INCONNU";
+  if (prop.length === 0) return "A_VERIFIER";
+
+  const hits = exp.filter((e) => prop.includes(e)).length;
+  if (hits === exp.length) return "OK";
+  if (hits > 0) return "PARTIEL";
+  return "A_VERIFIER";
+}
+
+function isSavRuleByExpected(expectedRuleCodes: string[]): boolean {
+  // familles "SAV / service" typiques chez toi
+  const savFamilies = new Set(["SAVA", "SAGR", "ISES", "ISER", "SAV", "PLP", "ACCS", "SERV"]);
+  return expectedRuleCodes.map(fam4).some((f) => savFamilies.has(f));
+}
+
+function articleVsKind2(s?: ArticleVerdict | string | null): BadgeKind {
+  if (s === "OK") return "green";
+  if (s === "PARTIEL") return "yellow";
+  if (s === "A_VERIFIER") return "orange";
+  if (s === "INCONNU") return "slate";
+  return "gray";
+}
 
 export default function DossiersList() {
   const [items, setItems] = useState<DossierFacturable[]>([]);
@@ -414,28 +524,46 @@ export default function DossiersList() {
     setShowRawTerrain(false);
   }
 
-  const selectedPidiCodes = useMemo(() => {
-    if (!selected) return [];
-    return parsePidiBrutCodes(selected.liste_articles);
-  }, [selected]);
+const selectedPidiCodes = useMemo(() => {
+  if (!selected) return [];
+  return parsePidiCodesNormalized(selected.liste_articles);
+}, [selected]);
 
-  const modalCompare = useMemo(() => {
-    if (!articlesTarget) return null;
 
-    const terrainRaw =
-      ((articlesTarget as any).article_facturation_propose as string | null | undefined) ??
-      ((articlesTarget as any).articles_facturation_propose as string | null | undefined) ??
-      ((articlesTarget as any).articles_terrain as string | null | undefined) ??
-      null;
+const modalCompare = useMemo(() => {
+  if (!articlesTarget) return null;
 
-    const proposedTerrain = uniq(parseAnyList(terrainRaw).map((x) => x.toUpperCase()));
-    const expected = uniq((articlesTarget.regle_articles_attendus ?? []).map((x) => String(x).toUpperCase()));
-    const pidiParsed = parsePidiBrutCodes(articlesTarget.liste_articles);
+  const terrainRaw =
+    ((articlesTarget as any).article_facturation_propose as string | null | undefined) ??
+    ((articlesTarget as any).articles_facturation_propose as string | null | undefined) ??
+    ((articlesTarget as any).articles_terrain as string | null | undefined) ??
+    null;
 
-    const verdict = computeArticleVerdict(proposedTerrain, expected);
+  const proposedTerrain = uniq(parseTerrainPropose(terrainRaw).map((x) => normArticleLikeDb(x))).filter(Boolean);
 
-    return { proposedTerrain, expected, pidiParsed, verdict };
-  }, [articlesTarget]);
+  // ✅ règle attendus robuste (ne crash plus)
+  const expectedRuleRaw = (articlesTarget as any).regle_articles_attendus;
+  const expectedRule = uniq(parseRegleAttendus(expectedRuleRaw).map((x) => normArticleLikeDb(x))).filter(Boolean);
+
+  // ✅ PIDI (normalisé façon DB)
+  const pidiParsed = parsePidiCodesNormalized(articlesTarget.liste_articles);
+
+  // ✅ choix source attendus: SAV => règle, sinon => terrain
+  const useRuleExpected = isSavRuleByExpected(expectedRule);
+
+const expected = uniq(parseRegleAttendus(articlesTarget.regle_articles_attendus).map((x) => x.toUpperCase()));
+
+  const verdict = computeFamVerdict(expected, pidiParsed);
+
+  return {
+    proposedTerrain,
+    expectedRule,
+    expected,
+    pidiParsed,
+    verdict,
+    useRuleExpected,
+  };
+}, [articlesTarget]);
 
   const groupedEntries = useMemo(() => groupByPpd(items), [items]);
 
@@ -1003,7 +1131,7 @@ export default function DossiersList() {
                   <div className="text-xs text-gray-500 mb-2">Articles attendus (règle)</div>
                   {selected.regle_articles_attendus?.length ? (
                     <div className="flex flex-wrap gap-1">
-                      {selected.regle_articles_attendus.map((a) => (
+                      {asStringArray(selected.regle_articles_attendus).map((a) => (
                         <Chip key={a} txt={a} />
                       ))}
                     </div>
@@ -1024,7 +1152,7 @@ export default function DossiersList() {
                 />
 
                 <div className="rounded border bg-gray-50 p-3">
-                  <div className="text-xs text-gray-500 mb-2">Colonne “liste_articles” (nettoyée)</div>
+                  <div className="text-xs text-gray-500 mb-2">Colonne "liste_articles" (nettoyée)</div>
 
                   {selectedPidiCodes.length ? (
                     <div className="flex flex-wrap gap-1">
@@ -1080,7 +1208,7 @@ export default function DossiersList() {
             </div>
 
             <div className="flex items-center gap-2">
-              <Badge txt={modalCompare.verdict} kind={articleVsKind(modalCompare.verdict)} />
+<Badge txt={modalCompare.verdict} kind={articleVsKind2(modalCompare.verdict)} />
               <div className="text-sm text-gray-700">
                 {modalCompare.verdict === "OK" && "Terrain vs règle: OK."}
                 {modalCompare.verdict === "A_VERIFIER" && "Terrain vs règle: mismatch / à contrôler."}
@@ -1101,20 +1229,22 @@ export default function DossiersList() {
                   <div className="text-sm text-gray-500">—</div>
                 )}
               </div>
+<div className="rounded-lg border bg-gray-50 p-4">
+  <div className="text-xs text-gray-500 mb-2">
+    {modalCompare.useRuleExpected ? "Attendus (règle - SAV)" : "Attendus (terrain)"}
+  </div>
 
-              <div className="rounded-lg border bg-gray-50 p-4">
-                <div className="text-xs text-gray-500 mb-2">Attendus (règle)</div>
-                {modalCompare.expected.length ? (
-                  <div className="flex flex-wrap gap-1">
-                    {modalCompare.expected.map((e) => (
-                      <Chip key={e} txt={e} />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-sm text-gray-500">—</div>
-                )}
-              </div>
-            </div>
+  {modalCompare.expected.length ? (
+    <div className="flex flex-wrap gap-1">
+      {modalCompare.expected.map((e) => (
+        <Chip key={e} txt={e} />
+      ))}
+    </div>
+  ) : (
+    <div className="text-sm text-gray-500">—</div>
+  )}
+</div>
+</div>
 
             <div className="rounded border bg-gray-50 p-3">
               <div className="text-xs text-gray-500 mb-2">Articles APP (parse PIDI)</div>
