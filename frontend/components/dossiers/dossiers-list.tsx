@@ -81,6 +81,15 @@ function formatFrDate(v?: string | null) {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+function asStringArray(v: any): string[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.map((x) => String(x));
+  if (typeof v === "string") return v.split(/[,|]/g).map((x) => x.trim()).filter(Boolean);
+  if (typeof v === "object") {
+    if (Array.isArray(v.articles)) return v.articles.map((x: any) => String(x));
+  }
+  return [];
+}
 
 function croisementKind(s?: string | null): BadgeKind {
   if (s === "OK") return "green";
@@ -294,37 +303,28 @@ function fam4(code: string): string {
  * - string JSON
  * - string simple "LSA,LSAFK"
  */
-function parseRegleArticlesAttendus(raw: any): string[] {
-  if (raw == null) return [];
-
-  // déjà un array
-  if (Array.isArray(raw)) {
-    return raw.map((x) => String(x)).filter(Boolean);
-  }
-
+function parseRegleAttendus(v: any): string[] {
+  if (!v) return [];
+  // array JSON
+  if (Array.isArray(v)) return v.map(String);
   // objet {articles:[...]}
-  if (typeof raw === "object") {
-    const maybe = (raw as any).articles;
-    if (Array.isArray(maybe)) return maybe.map((x: any) => String(x)).filter(Boolean);
-    return [];
-  }
-
+  if (typeof v === "object" && Array.isArray(v.articles)) return v.articles.map(String);
   // string: peut être JSON ou CSV
-  if (typeof raw === "string") {
-    const s = raw.trim();
+  if (typeof v === "string") {
+    const s = v.trim();
     if (!s) return [];
-    try {
-      const j = JSON.parse(s);
-      return parseRegleArticlesAttendus(j);
-    } catch {
-      // fallback split
-      return s
-        .split(/[\r\n,;|]+/g)
-        .map((x) => x.trim())
-        .filter(Boolean);
+    // essayer de parser comme JSON
+    if (s.startsWith('[') || s.startsWith('{')) {
+      try {
+        const j = JSON.parse(s);
+        return parseRegleAttendus(j); // récursif
+      } catch {
+        // pas du JSON valide, continuer
+      }
     }
+    // fallback: split CSV
+    return s.split(/[,|;]/g).map((x) => x.trim()).filter(Boolean);
   }
-
   return [];
 }
 
@@ -366,7 +366,7 @@ function computeFamVerdict(expectedCodes: string[], proposedCodes: string[]): Ar
 }
 
 function isSavRuleByExpected(expectedRuleCodes: string[]): boolean {
-  // familles “SAV / service” typiques chez toi
+  // familles "SAV / service" typiques chez toi
   const savFamilies = new Set(["SAVA", "SAGR", "ISES", "ISER", "SAV", "PLP", "ACCS", "SERV"]);
   return expectedRuleCodes.map(fam4).some((f) => savFamilies.has(f));
 }
@@ -543,7 +543,7 @@ const modalCompare = useMemo(() => {
 
   // ✅ règle attendus robuste (ne crash plus)
   const expectedRuleRaw = (articlesTarget as any).regle_articles_attendus;
-  const expectedRule = uniq(parseRegleArticlesAttendus(expectedRuleRaw).map((x) => normArticleLikeDb(x))).filter(Boolean);
+  const expectedRule = uniq(parseRegleAttendus(expectedRuleRaw).map((x) => normArticleLikeDb(x))).filter(Boolean);
 
   // ✅ PIDI (normalisé façon DB)
   const pidiParsed = parsePidiCodesNormalized(articlesTarget.liste_articles);
@@ -551,7 +551,7 @@ const modalCompare = useMemo(() => {
   // ✅ choix source attendus: SAV => règle, sinon => terrain
   const useRuleExpected = isSavRuleByExpected(expectedRule);
 
-  const expected = useRuleExpected ? expectedRule : proposedTerrain;
+const expected = uniq(parseRegleAttendus(articlesTarget.regle_articles_attendus).map((x) => x.toUpperCase()));
 
   const verdict = computeFamVerdict(expected, pidiParsed);
 
@@ -1131,7 +1131,7 @@ const modalCompare = useMemo(() => {
                   <div className="text-xs text-gray-500 mb-2">Articles attendus (règle)</div>
                   {selected.regle_articles_attendus?.length ? (
                     <div className="flex flex-wrap gap-1">
-                      {selected.regle_articles_attendus.map((a) => (
+                      {asStringArray(selected.regle_articles_attendus).map((a) => (
                         <Chip key={a} txt={a} />
                       ))}
                     </div>
@@ -1152,7 +1152,7 @@ const modalCompare = useMemo(() => {
                 />
 
                 <div className="rounded border bg-gray-50 p-3">
-                  <div className="text-xs text-gray-500 mb-2">Colonne “liste_articles” (nettoyée)</div>
+                  <div className="text-xs text-gray-500 mb-2">Colonne "liste_articles" (nettoyée)</div>
 
                   {selectedPidiCodes.length ? (
                     <div className="flex flex-wrap gap-1">
