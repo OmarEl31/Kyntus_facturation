@@ -1,12 +1,10 @@
-// frontend/components/dossiers/dossiers-list.tsx
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { RefreshCw, Upload, Download, X, ChevronRight, Info, Layers } from "lucide-react";
 
 import { listDossiers, statutsFinal, exportDossiersXlsx } from "@/services/dossiersApi";
-import type { DossierFacturable } from "@/types/dossier";
-import type { DossiersFilters } from "@/services/dossiersApi";
+import type { DossierFacturable, DossiersFilters } from "@/services/dossiersApi";
 
 import FiltersBar from "./filters-bar";
 import FileUploadModal from "./file-upload-modal";
@@ -71,6 +69,14 @@ function Badge({ txt, kind = "gray" }: { txt: string; kind?: BadgeKind }) {
   );
 }
 
+function Chip({ txt }: { txt: string }) {
+  return (
+    <span className="inline-flex items-center rounded-full border bg-white px-2 py-1 text-xs font-medium text-gray-700">
+      {txt}
+    </span>
+  );
+}
+
 function formatFrDate(v?: string | null) {
   if (!v) return "—";
   if (/^\d{2}\/\d{2}\/\d{4}/.test(v)) return v;
@@ -79,16 +85,9 @@ function formatFrDate(v?: string | null) {
   if (Number.isNaN(d.getTime())) return v;
 
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-function asStringArray(v: any): string[] {
-  if (!v) return [];
-  if (Array.isArray(v)) return v.map((x) => String(x));
-  if (typeof v === "string") return v.split(/[,|]/g).map((x) => x.trim()).filter(Boolean);
-  if (typeof v === "object") {
-    if (Array.isArray(v.articles)) return v.articles.map((x: any) => String(x));
-  }
-  return [];
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(
+    d.getMinutes()
+  )}`;
 }
 
 function croisementKind(s?: string | null): BadgeKind {
@@ -106,6 +105,19 @@ function statutFinalKind(s?: string | null): BadgeKind {
   if (s === "A_VERIFIER") return "orange";
   return "gray";
 }
+function prettyJson(v: any): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "string") return v;
+  try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+}
+
+function hasValue(v: any): boolean {
+  if (v === null || v === undefined) return false;
+  if (typeof v === "string") return v.trim().length > 0;
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === "object") return Object.keys(v).length > 0;
+  return true;
+}
 
 function motifKind(m?: string | null): BadgeKind {
   const x = (m ?? "").toUpperCase();
@@ -115,8 +127,6 @@ function motifKind(m?: string | null): BadgeKind {
   if (x === "REGLE_MANQUANTE") return "orange";
   if (x === "ACTPROD_MANQUANT") return "orange";
   if (x === "CLOTURE_INVALIDE") return "orange";
-  if (x === "ARTICLES_MANQUANTS") return "orange";
-  if (x === "ARTICLES_MISMATCH") return "orange";
 
   if (x === "PREVISITE") return "slate";
   if (x === "NON_FACTURABLE_REGLE") return "slate";
@@ -137,10 +147,6 @@ function motifLabel(m?: string | null): string {
       return "Act/Prod manquant";
     case "CLOTURE_INVALIDE":
       return "Clôture invalide";
-    case "ARTICLES_MANQUANTS":
-      return "Articles manquants";
-    case "ARTICLES_MISMATCH":
-      return "Articles ≠ règle";
     case "PREVISITE":
       return "Prévisite";
     case "NON_FACTURABLE_REGLE":
@@ -175,12 +181,18 @@ function terrainKind(mode?: string | null): BadgeKind {
   return "slate";
 }
 
+function parseAnyList(v?: string | null): string[] {
+  if (!v) return [];
+  return String(v)
+    .split(/[\r\n,;|]+/g)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
 function parsePidiBrutCodes(v?: string | null): string[] {
   if (!v) return [];
   const s = String(v).toUpperCase();
-
   const matches = s.match(/\b[A-Z]{2,}[A-Z0-9]{0,12}\b/g) ?? [];
-
   return Array.from(
     new Set(
       matches
@@ -188,40 +200,6 @@ function parsePidiBrutCodes(v?: string | null): string[] {
         .filter(Boolean)
         .filter((x) => x !== "PIDI" && x !== "BRUT")
     )
-  );
-}
-
-function articleVsKind(s?: string | null): BadgeKind {
-  if (s === "OK") return "green";
-  if (s === "A_VERIFIER") return "orange";
-  if (s === "NON_APPLICABLE") return "slate";
-  if (s === "INCONNU") return "gray";
-  return "gray";
-}
-
-function parseAnyList(v?: string | null): string[] {
-  if (!v) return [];
-  return String(v)
-    .split(/[,|]/g)
-    .map((x) => x.trim())
-    .filter(Boolean);
-}
-
-function uniq(arr: string[]) {
-  return Array.from(new Set(arr));
-}
-
-function computeArticleVerdict(proposed: string[], expected: string[]) {
-  if (expected.length === 0) return "INCONNU";
-  const ok = proposed.every((p) => expected.some((e) => p === e || p.startsWith(e)));
-  return ok ? "OK" : "A_VERIFIER";
-}
-
-function Chip({ txt }: { txt: string }) {
-  return (
-    <span className="inline-flex items-center rounded-full border bg-white px-2 py-1 text-xs font-medium text-gray-700">
-      {txt}
-    </span>
   );
 }
 
@@ -250,147 +228,25 @@ function groupByPpd(items: DossierFacturable[]) {
     const hasPidi = !!d.statut_pidi;
 
     let key: string;
-    if (!hasPidi) {
-      key = "— (sans PIDI)";
-    } else {
-      const raw = (d.numero_ppd ?? "").trim();
-      key = raw.length ? raw : "SANS_PPD";
-    }
+    if (!hasPidi) key = "— (sans PIDI)";
+    else key = (d.numero_ppd ?? "").trim() || "SANS_PPD";
 
     if (!m.has(key)) m.set(key, []);
     m.get(key)!.push(d);
   }
 
-  const entries = Array.from(m.entries()).sort((a, b) => {
-    const aSansPidi = a[0].startsWith("— (sans PIDI)");
-    const bSansPidi = b[0].startsWith("— (sans PIDI)");
-    if (aSansPidi && !bSansPidi) return 1;
-    if (!aSansPidi && bSansPidi) return -1;
-
-    const aSansPpd = a[0] === "SANS_PPD";
-    const bSansPpd = b[0] === "SANS_PPD";
-    if (aSansPpd && !bSansPpd) return 1;
-    if (!aSansPpd && bSansPpd) return -1;
-
-    return a[0].localeCompare(b[0]);
-  });
-
-  return entries;
-}
-function normArticleLikeDb(input?: any): string {
-  if (input == null) return "";
-  const s0 = String(input).toUpperCase().trim();
-
-  // retire "1.0", "2.0", etc. au début (comme ta fonction SQL)
-  const s1 = s0.replace(/^[0-9]+(\.[0-9]+)?\s*/g, "");
-
-  // ne garder que A-Z 0-9
-  const s2 = s1.replace(/[^A-Z0-9]+/g, "");
-  return s2;
-}
-
-function fam4(code: string): string {
-  const n = normArticleLikeDb(code);
-  if (!n) return "";
-  return n.length >= 4 ? n.slice(0, 4) : n;
-}
-
-/**
- * Convertit regle_articles_attendus (jsonb) => string[]
- * Supporte:
- * - ["LSA","LSAFK",...]
- * - { articles: ["ACCÈS", "LSAX + LSAK", ...] }
- * - string JSON
- * - string simple "LSA,LSAFK"
- */
-function parseRegleAttendus(v: any): string[] {
-  if (!v) return [];
-  // array JSON
-  if (Array.isArray(v)) return v.map(String);
-  // objet {articles:[...]}
-  if (typeof v === "object" && Array.isArray(v.articles)) return v.articles.map(String);
-  // string: peut être JSON ou CSV
-  if (typeof v === "string") {
-    const s = v.trim();
-    if (!s) return [];
-    // essayer de parser comme JSON
-    if (s.startsWith('[') || s.startsWith('{')) {
-      try {
-        const j = JSON.parse(s);
-        return parseRegleAttendus(j); // récursif
-      } catch {
-        // pas du JSON valide, continuer
-      }
-    }
-    // fallback: split CSV
-    return s.split(/[,|;]/g).map((x) => x.trim()).filter(Boolean);
-  }
-  return [];
-}
-
-function parseTerrainPropose(raw?: string | null): string[] {
-  if (!raw) return [];
-  return raw
-    .split(/[\r\n,;|]+/g)
-    .map((x) => x.trim())
-    .filter(Boolean);
-}
-
-function parsePidiCodesNormalized(v?: string | null): string[] {
-  if (!v) return [];
-  const s = String(v).toUpperCase();
-
-  // récupère tokens type article
-  const matches = s.match(/\b[A-Z]{2,}[A-Z0-9]{0,12}\b/g) ?? [];
-  const cleaned = matches
-    .map((x) => normArticleLikeDb(x))
-    .filter(Boolean)
-    .filter((x) => x !== "PIDI" && x !== "BRUT");
-
-  return Array.from(new Set(cleaned));
-}
-
-type ArticleVerdict = "OK" | "A_VERIFIER" | "PARTIEL" | "INCONNU";
-
-function computeFamVerdict(expectedCodes: string[], proposedCodes: string[]): ArticleVerdict {
-  const exp = Array.from(new Set(expectedCodes.map(fam4).filter(Boolean)));
-  const prop = Array.from(new Set(proposedCodes.map(fam4).filter(Boolean)));
-
-  if (exp.length === 0) return "INCONNU";
-  if (prop.length === 0) return "A_VERIFIER";
-
-  const hits = exp.filter((e) => prop.includes(e)).length;
-  if (hits === exp.length) return "OK";
-  if (hits > 0) return "PARTIEL";
-  return "A_VERIFIER";
-}
-
-function isSavRuleByExpected(expectedRuleCodes: string[]): boolean {
-  // familles "SAV / service" typiques chez toi
-  const savFamilies = new Set(["SAVA", "SAGR", "ISES", "ISER", "SAV", "PLP", "ACCS", "SERV"]);
-  return expectedRuleCodes.map(fam4).some((f) => savFamilies.has(f));
-}
-
-function articleVsKind2(s?: ArticleVerdict | string | null): BadgeKind {
-  if (s === "OK") return "green";
-  if (s === "PARTIEL") return "yellow";
-  if (s === "A_VERIFIER") return "orange";
-  if (s === "INCONNU") return "slate";
-  return "gray";
+  return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 }
 
 export default function DossiersList() {
   const [items, setItems] = useState<DossierFacturable[]>([]);
-  const [filters, setFilters] = useState<DossiersFilters>({});
+  const [filters, setFilters] = useState<DossiersFilters>({ limit: 5000, offset: 0 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | null>(null);
   const [exporting, setExporting] = useState(false);
 
   const [grouped, setGrouped] = useState(false);
-
-  const [articlesOpen, setArticlesOpen] = useState(false);
-  const [articlesTarget, setArticlesTarget] = useState<DossierFacturable | null>(null);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selected, setSelected] = useState<DossierFacturable | null>(null);
@@ -401,21 +257,22 @@ export default function DossiersList() {
   const load = useCallback(
     async (f?: DossiersFilters) => {
       const activeFilters = f ?? filters;
+
+      // ✅ afficher tout (dans la limite backend)
+      const normalized: DossiersFilters = {
+        ...activeFilters,
+        limit: 5000,
+        offset: 0,
+      };
+
       setLoading(true);
       setError(null);
 
       try {
-        const data = await listDossiers(activeFilters);
+        const data = await listDossiers(normalized);
         setRawItems(data);
-
-        const ppdNeedle = (activeFilters.ppd ?? "").trim();
-        const filtered =
-          ppdNeedle.length > 0
-            ? data.filter((d) => (d.numero_ppd ?? "").trim().toLowerCase().includes(ppdNeedle.toLowerCase()))
-            : data;
-
-        setItems(filtered);
-        if (f) setFilters(f);
+        setItems(data); // ✅ plus de refiltrage local PPD (ça cassait)
+        if (f) setFilters(normalized);
       } catch (e: any) {
         setRawItems([]);
         setItems([]);
@@ -428,17 +285,14 @@ export default function DossiersList() {
   );
 
   useEffect(() => {
-    load();
+    load({ limit: 5000, offset: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        if (articlesOpen) {
-          setArticlesOpen(false);
-          setArticlesTarget(null);
-        } else if (drawerOpen) {
+        if (drawerOpen) {
           setDrawerOpen(false);
           setSelected(null);
           setShowRawTerrain(false);
@@ -447,7 +301,7 @@ export default function DossiersList() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [articlesOpen, drawerOpen]);
+  }, [drawerOpen]);
 
   const ppdOptions = useMemo(() => {
     const xs = rawItems
@@ -455,6 +309,8 @@ export default function DossiersList() {
       .filter((x) => x.length > 0);
     return Array.from(new Set(xs)).sort((a, b) => a.localeCompare(b));
   }, [rawItems]);
+
+  const hasAnyPidi = useMemo(() => rawItems.some((d) => !!d.statut_pidi), [rawItems]);
 
   const countByCroisement = useMemo(() => {
     const m = new Map<string, number>();
@@ -475,22 +331,11 @@ export default function DossiersList() {
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [items]);
 
-  const hasAnyPidi = useMemo(() => rawItems.some((d) => !!d.statut_pidi), [rawItems]);
-
-  const countByArticles = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const it of items) {
-      const k = it.statut_article_vs_regle ?? "INCONNU";
-      m.set(k, (m.get(k) ?? 0) + 1);
-    }
-    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
-  }, [items]);
-
-  // ✅ NEW: répartition par motif (utile)
   const countByMotif = useMemo(() => {
     const m = new Map<string, number>();
     for (const it of items) {
-      const k = it.motif_verification ?? "—";
+      const k = (it.motif_verification ?? "").trim();
+      if (!k || k === "—") continue;
       m.set(k, (m.get(k) ?? 0) + 1);
     }
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
@@ -499,17 +344,13 @@ export default function DossiersList() {
   async function exportExcel() {
     setExporting(true);
     try {
+      // ✅ export selon filtres actuels
       await exportDossiersXlsx(filters);
     } catch (e: any) {
       setError(e?.message || "Export Excel échoué.");
     } finally {
       setExporting(false);
     }
-  }
-
-  function openArticles(d: DossierFacturable) {
-    setArticlesTarget(d);
-    setArticlesOpen(true);
   }
 
   function openDrawer(d: DossierFacturable) {
@@ -524,48 +365,17 @@ export default function DossiersList() {
     setShowRawTerrain(false);
   }
 
-const selectedPidiCodes = useMemo(() => {
-  if (!selected) return [];
-  return parsePidiCodesNormalized(selected.liste_articles);
-}, [selected]);
-
-
-const modalCompare = useMemo(() => {
-  if (!articlesTarget) return null;
-
-  const terrainRaw =
-    ((articlesTarget as any).article_facturation_propose as string | null | undefined) ??
-    ((articlesTarget as any).articles_facturation_propose as string | null | undefined) ??
-    ((articlesTarget as any).articles_terrain as string | null | undefined) ??
-    null;
-
-  const proposedTerrain = uniq(parseTerrainPropose(terrainRaw).map((x) => normArticleLikeDb(x))).filter(Boolean);
-
-  // ✅ règle attendus robuste (ne crash plus)
-  const expectedRuleRaw = (articlesTarget as any).regle_articles_attendus;
-  const expectedRule = uniq(parseRegleAttendus(expectedRuleRaw).map((x) => normArticleLikeDb(x))).filter(Boolean);
-
-  // ✅ PIDI (normalisé façon DB)
-  const pidiParsed = parsePidiCodesNormalized(articlesTarget.liste_articles);
-
-  // ✅ choix source attendus: SAV => règle, sinon => terrain
-  const useRuleExpected = isSavRuleByExpected(expectedRule);
-
-const expected = uniq(parseRegleAttendus(articlesTarget.regle_articles_attendus).map((x) => x.toUpperCase()));
-
-  const verdict = computeFamVerdict(expected, pidiParsed);
-
-  return {
-    proposedTerrain,
-    expectedRule,
-    expected,
-    pidiParsed,
-    verdict,
-    useRuleExpected,
-  };
-}, [articlesTarget]);
-
   const groupedEntries = useMemo(() => groupByPpd(items), [items]);
+
+  const selectedTerrainArticles = useMemo(() => {
+    if (!selected) return [];
+    return parseAnyList(selected.article_facturation_propose).map((x) => x.toUpperCase());
+  }, [selected]);
+
+  const selectedPidiCodes = useMemo(() => {
+    if (!selected) return [];
+    return parsePidiBrutCodes(selected.liste_articles);
+  }, [selected]);
 
   return (
     <div className="space-y-4">
@@ -582,13 +392,6 @@ const expected = uniq(parseRegleAttendus(articlesTarget.regle_articles_attendus)
         [data-details-btn]:hover {
           background: #d65c5c;
           border-color: #d65c5c;
-        }
-        [data-details-btn]:active {
-          transform: translateY(0.5px);
-        }
-        [data-details-btn]:focus-visible {
-          outline: none;
-          box-shadow: 0 0 0 2px rgba(243, 104, 104, 0.45), 0 0 0 4px #ffffff;
         }
       `}</style>
 
@@ -678,30 +481,19 @@ const expected = uniq(parseRegleAttendus(articlesTarget.regle_articles_attendus)
           </div>
         )}
 
-        <div>
-          <div className="text-sm text-gray-700 mb-2">Répartition (articles vs règle) :</div>
-          <div className="flex flex-wrap gap-2">
-            {countByArticles.map(([k, v]) => (
-              <div key={k} className="flex items-center gap-2">
-                <Badge txt={k.replaceAll("_", " ")} kind={articleVsKind(k)} />
-                <span className="text-sm text-gray-700">{v}</span>
-              </div>
-            ))}
+        {countByMotif.length > 0 && (
+          <div>
+            <div className="text-sm text-gray-700 mb-2">Répartition (motif) :</div>
+            <div className="flex flex-wrap gap-2">
+              {countByMotif.slice(0, 12).map(([k, v]) => (
+                <div key={k} className="flex items-center gap-2">
+                  <Badge txt={motifLabel(k)} kind={motifKind(k)} />
+                  <span className="text-sm text-gray-700">{v}</span>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-
-        {/* ✅ NEW */}
-        <div>
-          <div className="text-sm text-gray-700 mb-2">Répartition (motif) :</div>
-          <div className="flex flex-wrap gap-2">
-            {countByMotif.slice(0, 12).map(([k, v]) => (
-              <div key={k} className="flex items-center gap-2">
-                <Badge txt={motifLabel(k === "—" ? null : k)} kind={motifKind(k === "—" ? null : k)} />
-                <span className="text-sm text-gray-700">{v}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+        )}
       </div>
 
       <div className="border rounded-lg overflow-auto bg-white mx-2">
@@ -722,7 +514,7 @@ const expected = uniq(parseRegleAttendus(articlesTarget.regle_articles_attendus)
               <th className="p-3">Croisement</th>
               <th className="p-3">Praxedo</th>
               <th className="p-3">PIDI</th>
-              <th className="p-3">Articles</th>
+              <th className="p-3">Actions</th>
               <th className="p-3">Planifiée</th>
               <th className="p-3"></th>
             </tr>
@@ -740,7 +532,6 @@ const expected = uniq(parseRegleAttendus(articlesTarget.regle_articles_attendus)
                 const sf = d.statut_final ?? "NON_FACTURABLE";
                 const cro = d.statut_croisement ?? "INCONNU";
                 const terrainLabel = d.mode_passage ? d.mode_passage : "—";
-                const artVs = d.statut_article_vs_regle ?? "INCONNU";
 
                 return (
                   <tr
@@ -751,10 +542,8 @@ const expected = uniq(parseRegleAttendus(articlesTarget.regle_articles_attendus)
                   >
                     <td className="p-3 font-mono">{d.ot_key ?? "—"}</td>
                     <td className="p-3 font-mono">{d.nd_global ?? "—"}</td>
-
                     <td className="p-3 font-mono">{d.numero_ppd ?? "—"}</td>
                     <td className="p-3">{d.attachement_valide ?? "—"}</td>
-
                     <td className="p-3">{d.activite_code ?? "—"}</td>
                     <td className="p-3">{d.produit_code ?? "—"}</td>
                     <td className="p-3">{d.code_cible ?? "—"}</td>
@@ -781,7 +570,6 @@ const expected = uniq(parseRegleAttendus(articlesTarget.regle_articles_attendus)
                       </div>
                     </td>
 
-                    {/* ✅ Statut final + motif */}
                     <td className="p-3">
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-2">
@@ -817,20 +605,17 @@ const expected = uniq(parseRegleAttendus(articlesTarget.regle_articles_attendus)
                     </td>
 
                     <td className="p-3">
-                      <div className="flex items-center gap-2 min-w-[210px]">
-                        <Badge txt={String(artVs).replaceAll("_", " ")} kind={articleVsKind(String(artVs))} />
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openDrawer(d);
-                          }}
-                          data-details-btn
-                          className={`${DETAILS_BTN_CLASS} ml-auto`}
-                          title="Ouvrir les détails du dossier"
-                        >
-                          Détails
-                        </button>
-                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openDrawer(d);
+                        }}
+                        data-details-btn
+                        className={DETAILS_BTN_CLASS}
+                        title="Ouvrir les détails du dossier"
+                      >
+                        Détails
+                      </button>
                     </td>
 
                     <td className="p-3">{formatFrDate(d.date_planifiee)}</td>
@@ -842,139 +627,119 @@ const expected = uniq(parseRegleAttendus(articlesTarget.regle_articles_attendus)
                 );
               })
             ) : (
-              groupedEntries.map(([ppd, rows]) => {
-                const nb = rows.length;
-                const ok = rows.filter((r) => r.statut_final === "FACTURABLE").length;
-                const av = rows.filter((r) => r.statut_final === "A_VERIFIER").length;
-
-                return (
-                  <tr key={ppd} className="border-t">
-                    <td colSpan={17} className="p-0">
-                      <div className="px-3 py-2 bg-gray-50 border-b flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <span className="text-sm font-semibold text-gray-900">
-                            PPD: <span className="font-mono">{ppd}</span>
-                          </span>
-                          <span className="text-xs text-gray-600">{nb} dossiers</span>
-                          <span className="text-xs text-green-700">FACTURABLE: {ok}</span>
-                          <span className="text-xs text-orange-700">A_VERIFIER: {av}</span>
-                        </div>
+              groupedEntries.map(([ppd, rows]) => (
+                <tr key={ppd} className="border-t">
+                  <td colSpan={17} className="p-0">
+                    <div className="px-3 py-2 bg-gray-50 border-b flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm font-semibold text-gray-900">
+                          PPD: <span className="font-mono">{ppd}</span>
+                        </span>
+                        <span className="text-xs text-gray-600">{rows.length} dossiers</span>
                       </div>
+                    </div>
 
-                      <div className="overflow-auto">
-                        <table className="min-w-[1900px] w-full text-sm">
-                          <tbody>
-                            {rows.map((d) => {
-                              const sf = d.statut_final ?? "NON_FACTURABLE";
-                              const cro = d.statut_croisement ?? "INCONNU";
-                              const terrainLabel = d.mode_passage ? d.mode_passage : "—";
-                              const artVs = d.statut_article_vs_regle ?? "INCONNU";
+                    <div className="overflow-auto">
+                      <table className="min-w-[1900px] w-full text-sm">
+                        <tbody>
+                          {rows.map((d) => {
+                            const sf = d.statut_final ?? "NON_FACTURABLE";
+                            const cro = d.statut_croisement ?? "INCONNU";
+                            const terrainLabel = d.mode_passage ? d.mode_passage : "—";
 
-                              return (
-                                <tr
-                                  key={d.key_match}
-                                  className="border-b hover:bg-gray-50/50 cursor-pointer"
-                                  onClick={() => openDrawer(d)}
-                                  title="Clique pour ouvrir les détails"
-                                >
-                                  <td className="p-3 font-mono w-[160px]">{d.ot_key ?? "—"}</td>
-                                  <td className="p-3 font-mono w-[160px]">{d.nd_global ?? "—"}</td>
+                            return (
+                              <tr
+                                key={d.key_match}
+                                className="border-b hover:bg-gray-50/50 cursor-pointer"
+                                onClick={() => openDrawer(d)}
+                              >
+                                <td className="p-3 font-mono w-[160px]">{d.ot_key ?? "—"}</td>
+                                <td className="p-3 font-mono w-[160px]">{d.nd_global ?? "—"}</td>
+                                <td className="p-3 font-mono w-[160px]">{d.numero_ppd ?? "—"}</td>
+                                <td className="p-3 w-[160px]">{d.attachement_valide ?? "—"}</td>
+                                <td className="p-3 w-[80px]">{d.activite_code ?? "—"}</td>
+                                <td className="p-3 w-[80px]">{d.produit_code ?? "—"}</td>
+                                <td className="p-3 w-[120px]">{d.code_cible ?? "—"}</td>
 
-                                  <td className="p-3 font-mono w-[160px]">{d.numero_ppd ?? "—"}</td>
-                                  <td className="p-3 w-[160px]">{d.attachement_valide ?? "—"}</td>
+                                <td className="p-3 w-[110px]">
+                                  {d.code_cloture_code ? (
+                                    <Badge txt={d.code_cloture_code} kind={clotureKind(d.code_cloture_code)} />
+                                  ) : (
+                                    "—"
+                                  )}
+                                </td>
 
-                                  <td className="p-3 w-[80px]">{d.activite_code ?? "—"}</td>
-                                  <td className="p-3 w-[80px]">{d.produit_code ?? "—"}</td>
-                                  <td className="p-3 w-[120px]">{d.code_cible ?? "—"}</td>
+                                <td className="p-3 w-[120px]">
+                                  {d.mode_passage ? (
+                                    <Badge txt={terrainLabel} kind={terrainKind(d.mode_passage)} />
+                                  ) : (
+                                    <span className="text-gray-500">—</span>
+                                  )}
+                                </td>
 
-                                  <td className="p-3 w-[110px]">
-                                    {d.code_cloture_code ? (
-                                      <Badge txt={d.code_cloture_code} kind={clotureKind(d.code_cloture_code)} />
-                                    ) : (
-                                      "—"
-                                    )}
-                                  </td>
+                                <td className="p-3 w-[520px]">
+                                  <div className="max-w-[520px] truncate" title={d.libelle_regle ?? ""}>
+                                    {d.libelle_regle ?? "—"}
+                                  </div>
+                                </td>
 
-                                  <td className="p-3 w-[120px]">
-                                    {d.mode_passage ? (
-                                      <Badge txt={terrainLabel} kind={terrainKind(d.mode_passage)} />
-                                    ) : (
-                                      <span className="text-gray-500">—</span>
-                                    )}
-                                  </td>
-
-                                  <td className="p-3 w-[520px]">
-                                    <div className="max-w-[520px] truncate" title={d.libelle_regle ?? ""}>
-                                      {d.libelle_regle ?? "—"}
+                                <td className="p-3 w-[220px]">
+                                  <div className="flex flex-col gap-1">
+                                    <div className="flex items-center gap-2">
+                                      <Badge txt={sf.replaceAll("_", " ")} kind={statutFinalKind(sf)} />
+                                      {d.is_previsite ? <Badge txt="Prévisite" kind="slate" /> : null}
                                     </div>
-                                  </td>
+                                    {sf === "A_VERIFIER" && d.motif_verification ? (
+                                      <Badge txt={motifLabel(d.motif_verification)} kind={motifKind(d.motif_verification)} />
+                                    ) : null}
+                                  </div>
+                                </td>
 
-                                  {/* ✅ Statut final + motif aussi en grouped */}
-                                  <td className="p-3 w-[220px]">
-                                    <div className="flex flex-col gap-1">
-                                      <div className="flex items-center gap-2">
-                                        <Badge txt={sf.replaceAll("_", " ")} kind={statutFinalKind(sf)} />
-                                        {d.is_previsite ? <Badge txt="Prévisite" kind="slate" /> : null}
-                                      </div>
-                                      {sf === "A_VERIFIER" && d.motif_verification ? (
-                                        <Badge
-                                          txt={motifLabel(d.motif_verification)}
-                                          kind={motifKind(d.motif_verification)}
-                                        />
-                                      ) : null}
-                                    </div>
-                                  </td>
+                                <td className="p-3 w-[140px]">
+                                  <Badge txt={cro.replaceAll("_", " ")} kind={croisementKind(cro)} />
+                                </td>
 
-                                  <td className="p-3 w-[140px]">
-                                    <Badge txt={cro.replaceAll("_", " ")} kind={croisementKind(cro)} />
-                                  </td>
+                                <td className="p-3 w-[140px]">
+                                  {d.statut_praxedo ? (
+                                    <Badge
+                                      txt={praxedoLabel(d)}
+                                      kind={d.statut_praxedo.toLowerCase().includes("valid") ? "green" : "gray"}
+                                    />
+                                  ) : (
+                                    "—"
+                                  )}
+                                </td>
 
-                                  <td className="p-3 w-[140px]">
-                                    {d.statut_praxedo ? (
-                                      <Badge
-                                        txt={praxedoLabel(d)}
-                                        kind={d.statut_praxedo.toLowerCase().includes("valid") ? "green" : "gray"}
-                                      />
-                                    ) : (
-                                      "—"
-                                    )}
-                                  </td>
+                                <td className="p-3 w-[160px]">
+                                  <span className="text-purple-700 font-medium">{pidiLabel(d)}</span>
+                                </td>
 
-                                  <td className="p-3 w-[160px]">
-                                    <span className="text-purple-700 font-medium">{pidiLabel(d)}</span>
-                                  </td>
+                                <td className="p-3">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openDrawer(d);
+                                    }}
+                                    data-details-btn
+                                    className={DETAILS_BTN_CLASS}
+                                  >
+                                    Détails
+                                  </button>
+                                </td>
 
-                                  <td className="p-3">
-                                    <div className="flex items-center gap-2 min-w-[210px]">
-                                      <Badge txt={String(artVs).replaceAll("_", " ")} kind={articleVsKind(String(artVs))} />
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          openDrawer(d);
-                                        }}
-                                        data-details-btn
-                                        className={`${DETAILS_BTN_CLASS} ml-auto`}
-                                      >
-                                        Détails
-                                      </button>
-                                    </div>
-                                  </td>
-
-                                  <td className="p-3 w-[170px]">{formatFrDate(d.date_planifiee)}</td>
-
-                                  <td className="p-3 w-[40px]">
-                                    <ChevronRight className="h-4 w-4 text-gray-400" />
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
+                                <td className="p-3 w-[170px]">{formatFrDate(d.date_planifiee)}</td>
+                                <td className="p-3 w-[40px]">
+                                  <ChevronRight className="h-4 w-4 text-gray-400" />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </td>
+                </tr>
+              ))
             )}
           </tbody>
         </table>
@@ -1003,10 +768,6 @@ const expected = uniq(parseRegleAttendus(articlesTarget.regle_articles_attendus)
                   <Badge
                     txt={(selected.statut_croisement ?? "INCONNU").replaceAll("_", " ")}
                     kind={croisementKind(selected.statut_croisement)}
-                  />
-                  <Badge
-                    txt={(selected.statut_article_vs_regle ?? "INCONNU").replaceAll("_", " ")}
-                    kind={articleVsKind(selected.statut_article_vs_regle)}
                   />
                   {selected.is_previsite ? <Badge txt="Prévisite" kind="slate" /> : null}
                   {selected.motif_verification ? (
@@ -1091,6 +852,19 @@ const expected = uniq(parseRegleAttendus(articlesTarget.regle_articles_attendus)
                   </div>
                 </div>
 
+                <div className="pt-2">
+                  <div className="text-xs text-gray-500 mb-2">Articles terrain proposés</div>
+                  {selectedTerrainArticles.length ? (
+                    <div className="flex flex-wrap gap-1">
+                      {selectedTerrainArticles.map((a) => (
+                        <Chip key={a} txt={a} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-500">—</div>
+                  )}
+                </div>
+
                 {showRawTerrain && (
                   <div className="space-y-2">
                     <div className="rounded border bg-gray-50 p-3">
@@ -1126,34 +900,12 @@ const expected = uniq(parseRegleAttendus(articlesTarget.regle_articles_attendus)
                     }
                   />
                 </div>
-
-                <div className="pt-2">
-                  <div className="text-xs text-gray-500 mb-2">Articles attendus (règle)</div>
-                  {selected.regle_articles_attendus?.length ? (
-                    <div className="flex flex-wrap gap-1">
-                      {asStringArray(selected.regle_articles_attendus).map((a) => (
-                        <Chip key={a} txt={a} />
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-sm text-gray-500">— (règle sans attendus)</div>
-                  )}
-                </div>
               </div>
 
               <div className="rounded-lg border bg-white p-4 space-y-3">
-                <SectionTitle
-                  title="Articles PIDI (brut)"
-                  right={
-                    <button className="text-xs text-blue-700 hover:underline" onClick={() => openArticles(selected)}>
-                      Ouvrir en grand
-                    </button>
-                  }
-                />
-
+                <SectionTitle title="Articles PIDI (brut)" />
                 <div className="rounded border bg-gray-50 p-3">
-                  <div className="text-xs text-gray-500 mb-2">Colonne "liste_articles" (nettoyée)</div>
-
+                  <div className="text-xs text-gray-500 mb-2">Colonne "liste_articles" (tokens)</div>
                   {selectedPidiCodes.length ? (
                     <div className="flex flex-wrap gap-1">
                       {selectedPidiCodes.map((a) => (
@@ -1175,103 +927,6 @@ const expected = uniq(parseRegleAttendus(articlesTarget.regle_articles_attendus)
             <div className="border-t p-4 flex items-center justify-between">
               <div className="text-xs text-gray-500">ESC pour fermer</div>
               <button onClick={closeDrawer} className="border rounded px-3 py-2 hover:bg-gray-50">
-                Fermer
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Comparer Articles */}
-      {articlesOpen && articlesTarget && modalCompare && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-lg w-full max-w-3xl p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="space-y-1">
-                <h2 className="text-lg font-semibold">Comparer les articles</h2>
-                <div className="text-xs text-gray-500">
-                  OT: <span className="font-mono">{articlesTarget.ot_key ?? "—"}</span> • ND:{" "}
-                  <span className="font-mono">{articlesTarget.nd_global ?? "—"}</span>
-                </div>
-              </div>
-
-              <button
-                onClick={() => {
-                  setArticlesOpen(false);
-                  setArticlesTarget(null);
-                }}
-                className="text-gray-500 hover:text-gray-700"
-                aria-label="Fermer"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2">
-<Badge txt={modalCompare.verdict} kind={articleVsKind2(modalCompare.verdict)} />
-              <div className="text-sm text-gray-700">
-                {modalCompare.verdict === "OK" && "Terrain vs règle: OK."}
-                {modalCompare.verdict === "A_VERIFIER" && "Terrain vs règle: mismatch / à contrôler."}
-                {modalCompare.verdict === "INCONNU" && "Règle sans attendus."}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="rounded-lg border bg-gray-50 p-4">
-                <div className="text-xs text-gray-500 mb-2">Terrain (proposé)</div>
-                {modalCompare.proposedTerrain.length ? (
-                  <div className="flex flex-wrap gap-1">
-                    {modalCompare.proposedTerrain.map((p) => (
-                      <Chip key={p} txt={p} />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-sm text-gray-500">—</div>
-                )}
-              </div>
-<div className="rounded-lg border bg-gray-50 p-4">
-  <div className="text-xs text-gray-500 mb-2">
-    {modalCompare.useRuleExpected ? "Attendus (règle - SAV)" : "Attendus (terrain)"}
-  </div>
-
-  {modalCompare.expected.length ? (
-    <div className="flex flex-wrap gap-1">
-      {modalCompare.expected.map((e) => (
-        <Chip key={e} txt={e} />
-      ))}
-    </div>
-  ) : (
-    <div className="text-sm text-gray-500">—</div>
-  )}
-</div>
-</div>
-
-            <div className="rounded border bg-gray-50 p-3">
-              <div className="text-xs text-gray-500 mb-2">Articles APP (parse PIDI)</div>
-              {modalCompare.pidiParsed.length ? (
-                <div className="flex flex-wrap gap-1">
-                  {modalCompare.pidiParsed.map((a) => (
-                    <Chip key={a} txt={a} />
-                  ))}
-                </div>
-              ) : (
-                <div className="text-sm text-gray-500">—</div>
-              )}
-            </div>
-
-            <div className="rounded border bg-gray-50 p-3 text-sm">
-              <div className="text-xs text-gray-500 mb-2">Liste des articles (PIDI brut)</div>
-              <pre className="whitespace-pre-wrap break-words text-gray-800">{articlesTarget.liste_articles ?? "—"}</pre>
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => {
-                  setArticlesOpen(false);
-                  setArticlesTarget(null);
-                }}
-                className="border rounded px-3 py-2 hover:bg-gray-50"
-              >
                 Fermer
               </button>
             </div>

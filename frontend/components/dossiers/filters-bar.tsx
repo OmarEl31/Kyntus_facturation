@@ -1,140 +1,135 @@
 "use client";
+
 import { useMemo, useState } from "react";
-import { Search, Filter, RotateCcw } from "lucide-react";
-import type { StatutFinal, CroisementStatut } from "@/types/dossier";
 
 type Props = {
-  onSearch: (filters: { q?: string; ppd?: string; statut?: StatutFinal; croisement?: CroisementStatut }) => void;
+  onSearch: (filters: {
+    q?: string;
+    ppd?: string;
+    statut_final?: string;
+    statut_croisement?: string;
+  }) => void;
   loading?: boolean;
-  statuts: readonly StatutFinal[];
-  ppds?: string[]; // liste existante (options)
+  statuts: readonly string[];
+  ppds: string[];
 };
 
-export default function FiltersBar({ onSearch, loading, statuts, ppds }: Props) {
+export default function FiltersBar({ onSearch, loading = false, statuts, ppds }: Props) {
   const [q, setQ] = useState("");
   const [ppd, setPpd] = useState("");
-  const [statut, setStatut] = useState<StatutFinal | "">("");
-  const [croisement, setCroisement] = useState<CroisementStatut | "">("");
+  const [statutFinal, setStatutFinal] = useState("");
+  const [croisement, setCroisement] = useState("");
 
-  const ppdOptions = useMemo(() => (ppds ?? []).filter(Boolean), [ppds]);
+  const ppdOptions = useMemo(() => Array.from(new Set(ppds)).sort((a, b) => a.localeCompare(b)), [ppds]);
 
-  function submit(next?: Partial<{ q: string; ppd: string; statut: StatutFinal | ""; croisement: CroisementStatut | "" }>) {
-    const nq = (next?.q ?? q).trim();
-    const nppd = (next?.ppd ?? ppd).trim();
-    const nstatut = (next?.statut ?? statut);
-    const ncrois = (next?.croisement ?? croisement);
-
+  function submit() {
     onSearch({
-      q: nq || undefined,
-      ppd: nppd || undefined,
-      statut: nstatut || undefined,
-      croisement: ncrois || undefined,
+      q: q.trim() || undefined,
+      ppd: ppd || undefined,
+      statut_final: statutFinal || undefined,
+      statut_croisement: croisement || undefined,
     });
   }
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    submit();
-  }
-
-  function handleReset() {
+  function reset() {
     setQ("");
     setPpd("");
-    setStatut("");
+    setStatutFinal("");
     setCroisement("");
     onSearch({});
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3 px-2 py-2">
-      {/* Recherche OT/ND */}
-      <div className="flex flex-col">
-        <label className="text-xs text-gray-600 mb-1">Recherche (OT / ND)</label>
-        <div className="flex items-center border rounded px-2 py-1 bg-white">
-          <Search className="h-4 w-4 text-gray-400 mr-1" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            className="outline-none text-sm flex-1"
-            placeholder="Ex: 0142019878..."
-          />
+    <div className="mx-2 rounded-lg border bg-white px-3 py-2">
+      <div className="flex flex-wrap items-end gap-2">
+        {/* Recherche compacte */}
+        <div className="w-[320px] max-w-full">
+          <label className="block text-[11px] font-medium text-gray-600 mb-1">Recherche (OT / ND)</label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">⌕</span>
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submit();
+              }}
+              placeholder="Ex: 0142019878…"
+              className="h-9 w-full rounded-md border bg-white pl-8 pr-3 text-sm outline-none focus:ring-2 focus:ring-blue-200"
+            />
+          </div>
+        </div>
+
+        {/* PPD */}
+        <div className="min-w-[160px]">
+          <label className="block text-[11px] font-medium text-gray-600 mb-1">PPD</label>
+          <select
+            value={ppd}
+            onChange={(e) => setPpd(e.target.value)}
+            className="h-9 w-full rounded-md border bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-blue-200"
+          >
+            <option value="">Tous</option>
+            {ppdOptions.map((x) => (
+              <option key={x} value={x}>
+                {x}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Statut final */}
+        <div className="min-w-[170px]">
+          <label className="block text-[11px] font-medium text-gray-600 mb-1">Statut final</label>
+          <select
+            value={statutFinal}
+            onChange={(e) => setStatutFinal(e.target.value)}
+            className="h-9 w-full rounded-md border bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-blue-200"
+          >
+            <option value="">Tous</option>
+            {statuts.map((s) => (
+              <option key={s} value={s}>
+                {s.replaceAll("_", " ")}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Croisement */}
+        <div className="min-w-[180px]">
+          <label className="block text-[11px] font-medium text-gray-600 mb-1">Croisement</label>
+          <select
+            value={croisement}
+            onChange={(e) => setCroisement(e.target.value)}
+            className="h-9 w-full rounded-md border bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-blue-200"
+          >
+            <option value="">Tous</option>
+            <option value="OK">OK</option>
+            <option value="ABSENT_PRAXEDO">ABSENT PRAXEDO</option>
+            <option value="ABSENT_PIDI">ABSENT PIDI</option>
+            <option value="INCONNU">INCONNU</option>
+          </select>
+        </div>
+
+        {/* Actions (collées aux filtres) */}
+        <div className="flex items-end gap-2">
+          <button
+            onClick={reset}
+            disabled={loading}
+            className="h-9 rounded-md border bg-white px-3 text-sm hover:bg-gray-50 disabled:opacity-60"
+            title="Réinitialiser"
+          >
+            Reset
+          </button>
+
+          <button
+            onClick={submit}
+            disabled={loading}
+            className="h-9 rounded-md bg-gray-900 px-3 text-sm text-white hover:bg-black disabled:opacity-60"
+            title="Appliquer"
+          >
+            Filtrer
+          </button>
         </div>
       </div>
-
-      {/* ✅ PPD : vraie liste déroulante (valeurs existantes) */}
-      <div className="flex flex-col min-w-[220px]">
-        <label className="text-xs text-gray-600 mb-1">
-          PPD {ppdOptions.length ? <span className="text-gray-400">({ppdOptions.length})</span> : null}
-        </label>
-        <select
-          value={ppd}
-          onChange={(e) => setPpd(e.target.value)}
-          className="border rounded px-2 py-1 text-sm bg-white"
-          disabled={!ppdOptions.length}
-        >
-          <option value="">Tous</option>
-          {ppdOptions.map((x) => (
-            <option key={x} value={x}>
-              {x}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Statut final */}
-      <div className="flex flex-col">
-        <label className="text-xs text-gray-600 mb-1">Statut final</label>
-        <select
-          value={statut}
-          onChange={(e) => setStatut(e.target.value as StatutFinal | "")}
-          className="border rounded px-2 py-1 text-sm bg-white"
-        >
-          <option value="">Tous</option>
-          {statuts.map((s) => (
-            <option key={s} value={s}>
-              {s.replace("_", " ")}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Croisement */}
-      <div className="flex flex-col">
-        <label className="text-xs text-gray-600 mb-1">Croisement</label>
-        <select
-          value={croisement}
-          onChange={(e) => setCroisement(e.target.value as CroisementStatut | "")}
-          className="border rounded px-2 py-1 text-sm bg-white"
-        >
-          <option value="">Tous</option>
-          <option value="OK">OK</option>
-          <option value="ABSENT_PRAXEDO">ABSENT PRAXEDO</option>
-          <option value="ABSENT_PIDI">ABSENT PIDI</option>
-          <option value="INCONNU">INCONNU</option>
-        </select>
-      </div>
-
-      {/* Actions */}
-      <div className="flex items-end gap-2">
-        <button
-          type="button"
-          onClick={handleReset}
-          disabled={loading}
-          className="inline-flex items-center gap-1 px-3 py-1.5 rounded border bg-white text-sm hover:bg-gray-50 disabled:opacity-60"
-          title="Réinitialiser les filtres"
-        >
-          <RotateCcw className="h-4 w-4" />
-          Reset
-        </button>
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="inline-flex items-center gap-1 px-3 py-1.5 rounded bg-gray-800 text-white text-sm hover:bg-gray-900 disabled:opacity-60"
-        >
-          <Filter className="h-4 w-4" /> Filtrer
-        </button>
-      </div>
-    </form>
+    </div>
   );
 }

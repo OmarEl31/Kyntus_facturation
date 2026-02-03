@@ -1,139 +1,95 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
-
-import { importCsv } from "@/services/dossiersApi";
-
-const MAX_FILE_SIZE = 25 * 1024 * 1024;
+import { useState } from "react";
+import { X, Upload } from "lucide-react";
+import { uploadPraxedo, uploadPidi } from "@/services/dossiersApi";
 
 type Props = {
   type: "PRAXEDO" | "PIDI";
+  onImported: () => void;
   onClose: () => void;
-  onImported?: () => void;
 };
 
-export default function FileUploadModal({ type, onClose, onImported }: Props) {
+export default function FileUploadModal({ type, onImported, onClose }: Props) {
   const [file, setFile] = useState<File | null>(null);
-  const [delimiter, setDelimiter] = useState<";" | ",">(";");
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  const abortRef = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    if (!file) return;
-
-    (async () => {
-      try {
-        const head = await file.slice(0, 4096).text();
-        const firstLine = head.split(/\r?\n/)[0] ?? "";
-        const sc = (firstLine.match(/;/g) || []).length;
-        const cm = (firstLine.match(/,/g) || []).length;
-        if (sc > cm) setDelimiter(";");
-        else if (cm > sc) setDelimiter(",");
-      } catch {
-        // ignore
-      }
-    })();
-  }, [file]);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ message: string; count: number } | null>(null);
 
   async function handleUpload() {
-    setErrorMsg(null);
+    if (!file) {
+      setError("Veuillez sélectionner un fichier CSV.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setResult(null);
 
     try {
-      if (!file) throw new Error("Veuillez choisir un fichier CSV.");
-      if (!/\.(csv|txt)$/i.test(file.name)) throw new Error("Format invalide (CSV/TXT).");
-      if (file.size > MAX_FILE_SIZE) throw new Error("Fichier trop volumineux (max 25 Mo).");
-
-      setLoading(true);
-
-      abortRef.current = new AbortController();
-
-      await importCsv({
-        type,
-        file,
-        delimiter,
-        signal: abortRef.current.signal,
-      });
-
-      alert(`Import ${type} réussi.`);
-      onImported?.();
-      onClose();
+      const res = type === "PRAXEDO" ? await uploadPraxedo(file) : await uploadPidi(file);
+      setResult(res);
+      onImported();
     } catch (e: any) {
-      // ✅ évite le fameux [object Object]
-      const msg =
-        typeof e?.message === "string"
-          ? e.message
-          : typeof e === "string"
-          ? e
-          : JSON.stringify(e);
-      setErrorMsg(msg || "Échec d'import.");
+      setError(e?.message || "Erreur lors de l'import du fichier.");
     } finally {
       setLoading(false);
-      abortRef.current = null;
     }
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-lg w-full max-w-lg p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="text-lg font-semibold">Importer {type}</div>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700" aria-label="Fermer">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
 
-        <div className="space-y-2">
-          <label className="text-sm text-gray-700">Fichier (.csv / .txt)</label>
-          <input
-            type="file"
-            accept=".csv,.txt"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="block w-full text-sm"
-          />
-          {file && (
-            <div className="text-xs text-gray-500">
-              {file.name} — {Math.round(file.size / 1024)} Ko
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-sm text-gray-700">Séparateur</label>
-          <select
-            value={delimiter}
-            onChange={(e) => setDelimiter(e.target.value as ";" | ",")}
-            className="border rounded px-2 py-1 text-sm bg-white"
-          >
-            <option value=";">Point-virgule ( ; )</option>
-            <option value=",">Virgule ( , )</option>
-          </select>
-          <div className="text-xs text-gray-500">Auto-détecté depuis l’en-tête si possible.</div>
-        </div>
-
-        {errorMsg && (
-          <div className="p-2 rounded border border-red-200 bg-red-50 text-sm text-red-700">
-            {errorMsg}
+      <div className="absolute inset-0 flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-white rounded-lg shadow-xl border">
+          <div className="flex items-center justify-between px-4 py-3 border-b">
+            <h2 className="text-sm font-semibold">Import fichier {type}</h2>
+            <button onClick={onClose} className="text-gray-500 hover:text-gray-800" aria-label="Fermer">
+              <X className="h-5 w-5" />
+            </button>
           </div>
-        )}
 
-        <div className="flex justify-end gap-2 pt-2">
-          <button
-            onClick={onClose}
-            disabled={loading}
-            className="border rounded px-3 py-2 hover:bg-gray-50 disabled:opacity-60"
-          >
-            Annuler
-          </button>
-          <button
-            onClick={handleUpload}
-            disabled={loading}
-            className="rounded px-3 py-2 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
-          >
-            {loading ? "Import…" : "Importer"}
-          </button>
+          <div className="p-4 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Fichier CSV</label>
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                className="block w-full text-sm"
+              />
+            </div>
+
+            {error && (
+              <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+            )}
+
+            {result && (
+              <div className="rounded border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                ✅ {result.message} — {result.count} lignes importées
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-end gap-2 px-4 py-3 border-t">
+            <button
+              onClick={onClose}
+              disabled={loading}
+              className="px-3 py-2 text-sm rounded border hover:bg-gray-50 disabled:opacity-60"
+            >
+              Annuler
+            </button>
+
+            <button
+              onClick={handleUpload}
+              disabled={loading}
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
+            >
+              <Upload className="h-4 w-4" />
+              {loading ? "Import..." : "Importer"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
