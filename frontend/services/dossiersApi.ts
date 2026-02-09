@@ -145,20 +145,31 @@ export async function exportDossiersXlsx(filters: DossiersFilters = {}): Promise
 }
 
 export interface ImportCsvOptions {
-  type: "PRAXEDO" | "PIDI";
+   type: "PRAXEDO" | "PIDI" | "ORANGE_PPD";
   file: File;
   delimiter?: ";" | ",";
   signal?: AbortSignal;
 }
 
-export async function importCsv(options: ImportCsvOptions): Promise<{ message: string; count: number }> {
-  const { type, file, delimiter = ";", signal } = options;
+export interface ImportCsvResult {
+  message: string;
+  count: number;
+  rows?: number;
+  import_id?: string;
+}
+
+export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvResult> {  const { type, file, delimiter = ";", signal } = options;
 
   const formData = new FormData();
   formData.append("file", file);
   formData.append("delimiter", delimiter);
 
-  const endpoint = type === "PRAXEDO" ? `${API_URL}/api/import/praxedo` : `${API_URL}/api/import/pidi`;
+  const endpoint =
+    type === "PRAXEDO"
+      ? `${API_URL}/api/import/praxedo`
+      : type === "PIDI"
+      ? `${API_URL}/api/import/pidi`
+      : `${API_URL}/api/orange-ppd/import`;
 
   const response = await fetch(endpoint, { method: "POST", body: formData, signal });
 
@@ -172,3 +183,57 @@ export async function importCsv(options: ImportCsvOptions): Promise<{ message: s
 
 export const uploadPraxedo = (file: File) => importCsv({ type: "PRAXEDO", file });
 export const uploadPidi = (file: File) => importCsv({ type: "PIDI", file });
+export const uploadOrangePpd = (file: File) => importCsv({ type: "ORANGE_PPD", file });
+
+export interface OrangePpdImportSummary {
+  import_id: string;
+  filename?: string | null;
+  row_count?: number | null;
+  imported_by?: string | null;
+  imported_at?: string | null;
+}
+
+export interface OrangePpdComparison {
+  import_id?: string;
+  num_ot: string;
+  numero_ppd_orange?: string | null;
+  numero_ppd_kyntus?: string | null;
+  facturation_orange?: number | null;
+  facturation_kyntus?: number | null;
+  statut_final?: string | null;
+  statut_croisement?: string | null;
+  dossier_trouve: boolean;
+  mismatch_ppd: boolean;
+  mismatch_facturation: boolean;
+  a_verifier: boolean;
+}
+
+export async function listOrangeImports(limit = 20): Promise<OrangePpdImportSummary[]> {
+  const response = await fetch(`${API_URL}/api/orange-ppd/imports?limit=${limit}`);
+  if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
+  return response.json();
+}
+
+export async function listOrangePpdOptions(importId?: string): Promise<string[]> {
+  const qs = new URLSearchParams();
+  if (importId) qs.set("import_id", importId);
+
+  const response = await fetch(`${API_URL}/api/orange-ppd/ppd-options${qs.toString() ? `?${qs}` : ""}`);
+  if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
+  return response.json();
+}
+
+export async function compareOrangePpd(params: {
+  importId?: string;
+  ppd?: string;
+  onlyMismatch?: boolean;
+} = {}): Promise<OrangePpdComparison[]> {
+  const qs = new URLSearchParams();
+  if (params.importId) qs.set("import_id", params.importId);
+  if (params.ppd?.trim()) qs.set("ppd", params.ppd.trim());
+  if (params.onlyMismatch) qs.set("only_mismatch", "true");
+
+  const response = await fetch(`${API_URL}/api/orange-ppd/compare${qs.toString() ? `?${qs}` : ""}`);
+  if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
+  return response.json();
+}

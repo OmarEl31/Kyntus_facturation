@@ -1,3 +1,4 @@
+# Backend/schemas/dossier_facturable.py
 from __future__ import annotations
 
 from datetime import datetime
@@ -7,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class DossierFacturable(BaseModel):
-    model_config = ConfigDict(from_attributes=True)  # IMPORTANT pour ORM (SQLAlchemy)
+    model_config = ConfigDict(from_attributes=True)
 
     key_match: str
 
@@ -23,10 +24,8 @@ class DossierFacturable(BaseModel):
     code_cloture_code: Optional[str] = None
     statut_praxedo: Optional[str] = None
 
-    # ⚠️ Chez toi c'est du TEXT "26/01/2026 08:00" => doit rester string
+    # text en base
     date_planifiee: Optional[str] = None
-
-    # timestamp en base => datetime OK (sera sérialisé en ISO)
     date_cloture: Optional[datetime] = None
 
     technicien: Optional[str] = None
@@ -47,18 +46,16 @@ class DossierFacturable(BaseModel):
 
     statut_facturation: Optional[str] = None
 
-    # arrays postgres => list[str]
-    codes_cloture_facturables: Optional[list[str]] = None
-    documents_attendus: Optional[list[str]] = None
-    pieces_facturation: Optional[list[str]] = None
-    outils_depose: Optional[list[str]] = None
+    codes_cloture_facturables: Optional[list[str]] = None  # text[]
+    documents_attendus: Optional[list[str]] = None         # text[]
+    pieces_facturation: Optional[list[str]] = None         # text[]
+    outils_depose: Optional[list[str]] = None              # text[]
 
-    # jsonb => Any
-    type_branchement: Optional[Any] = None
-    services: Optional[Any] = None
-    prix_degressifs: Optional[Any] = None
-    articles_optionnels: Optional[Any] = None
-    justificatifs: Optional[Any] = None
+    type_branchement: Optional[Any] = None   # jsonb
+    services: Optional[Any] = None           # jsonb
+    prix_degressifs: Optional[Any] = None    # jsonb
+    articles_optionnels: Optional[Any] = None  # jsonb
+    justificatifs: Optional[Any] = None      # jsonb
 
     plp_applicable: Optional[bool] = None
     categorie: Optional[str] = None
@@ -68,7 +65,7 @@ class DossierFacturable(BaseModel):
     statut_final: Optional[str] = None
     cloture_facturable: Optional[bool] = None
 
-    generated_at: Optional[datetime] = None  # timestamp
+    generated_at: Optional[datetime] = None
 
     desc_site: Optional[str] = None
     description: Optional[str] = None
