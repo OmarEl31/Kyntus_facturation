@@ -3,8 +3,15 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { RefreshCw, Upload, Download, X, ChevronRight, Info, Layers } from "lucide-react";
 
-import { listDossiers, statutsFinal, exportDossiersXlsx } from "@/services/dossiersApi";
-import type { DossierFacturable, DossiersFilters } from "@/services/dossiersApi";
+import {
+  compareOrangePpd,
+  exportDossiersXlsx,
+  listDossiers,
+  listOrangeImports,
+  listOrangePpdOptions,
+  statutsFinal,
+} from "@/services/dossiersApi";
+import type { DossierFacturable, DossiersFilters, OrangePpdComparison, OrangePpdImportSummary } from "@/services/dossiersApi";
 
 import FiltersBar from "./filters-bar";
 import FileUploadModal from "./file-upload-modal";
@@ -243,8 +250,15 @@ export default function DossiersList() {
   const [filters, setFilters] = useState<DossiersFilters>({ limit: 5000, offset: 0 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | null>(null);
-  const [exporting, setExporting] = useState(false);
+   const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | "ORANGE_PPD" | null>(null);
+  const [orangeRows, setOrangeRows] = useState<OrangePpdComparison[]>([]);
+  const [orangeImports, setOrangeImports] = useState<OrangePpdImportSummary[]>([]);
+  const [selectedOrangeImportId, setSelectedOrangeImportId] = useState<string>("");
+  const [orangePpdOptions, setOrangePpdOptions] = useState<string[]>([]);
+  const [selectedOrangePpd, setSelectedOrangePpd] = useState<string>("");
+  const [onlyOrangeMismatch, setOnlyOrangeMismatch] = useState(false);
+  const [loadingOrange, setLoadingOrange] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   const [grouped, setGrouped] = useState(false);
 
@@ -288,6 +302,34 @@ export default function DossiersList() {
     load({ limit: 5000, offset: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+ const loadOrangeComparison = useCallback(
+    async (opts?: { importId?: string; ppd?: string; onlyMismatch?: boolean }) => {
+      setLoadingOrange(true);
+      try {
+        const importId = opts?.importId ?? selectedOrangeImportId;
+        const [rows, imports, ppds] = await Promise.all([
+          compareOrangePpd({
+            importId,
+            ppd: opts?.ppd ?? selectedOrangePpd,
+            onlyMismatch: opts?.onlyMismatch ?? onlyOrangeMismatch,
+          }),
+          listOrangeImports(30),
+          listOrangePpdOptions(importId || undefined),
+        ]);
+        setOrangeRows(rows);
+        setOrangeImports(imports);
+        setOrangePpdOptions(ppds);
+        if (!selectedOrangeImportId && imports.length > 0) {
+          setSelectedOrangeImportId(imports[0].import_id);
+        }
+      } catch (e: any) {
+        setError(e?.message || "Erreur chargement comparaison Orange.");
+      } finally {
+        setLoadingOrange(false);
+      }
+    },
+    [onlyOrangeMismatch, selectedOrangeImportId, selectedOrangePpd]
+  );
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -342,14 +384,13 @@ export default function DossiersList() {
   }, [items]);
 
   async function exportExcel() {
-    setExporting(true);
-    try {
+    setIsExporting(true);    try {
       // ✅ export selon filtres actuels
       await exportDossiersXlsx(filters);
     } catch (e: any) {
       setError(e?.message || "Export Excel échoué.");
     } finally {
-      setExporting(false);
+      setIsExporting(false);
     }
   }
 
@@ -436,15 +477,21 @@ export default function DossiersList() {
             <Upload className="h-4 w-4" />
             PIDI
           </button>
+ <button
+            onClick={() => setImportType("ORANGE_PPD")}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50"
+          >
+            <Upload className="h-4 w-4" />
+            Orange PPD
+          </button>
 
           <button
             onClick={exportExcel}
-            disabled={exporting || items.length === 0}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+            disabled={isExporting || items.length === 0}            className="inline-flex items-center gap-2 px-3 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
             title="Exporter en Excel (xlsx)"
           >
             <Download className="h-4 w-4" />
-            {exporting ? "Export…" : "Exporter Excel"}
+            {isExporting ? "Export…" : "Exporter Excel"}
           </button>
         </div>
       </div>
@@ -495,7 +542,93 @@ export default function DossiersList() {
           </div>
         )}
       </div>
+   <div className="mx-2 rounded-lg border bg-white p-4 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold">Comparaison Kyntus vs Orange (Num OT)</div>
+            <div className="text-xs text-gray-500">Vérification des écarts PPD et facturation entre Kyntus et Orange (isolation par import).</div>
+          </div>
+          <button
+            onClick={() => loadOrangeComparison()}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50"
+            disabled={loadingOrange}
+          >
+            <RefreshCw className="h-4 w-4" />
+            {loadingOrange ? "Chargement..." : "Actualiser Orange"}
+          </button>
+        </div>
 
+        <div className="flex flex-wrap items-center gap-3">
+          <select
+            value={selectedOrangeImportId}
+            onChange={(e) => setSelectedOrangeImportId(e.target.value)}
+            className="border rounded px-2 py-2 text-sm min-w-[360px]"
+          >
+            <option value="">Dernier import</option>
+            {orangeImports.map((it) => (
+              <option key={it.import_id} value={it.import_id}>
+                {(it.imported_at ?? "?").replace("T", " ").slice(0, 19)} • {it.filename ?? "sans nom"} • {it.row_count ?? 0} lignes
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={selectedOrangePpd}
+            onChange={(e) => setSelectedOrangePpd(e.target.value)}
+            className="border rounded px-2 py-2 text-sm min-w-[240px]"
+          >
+            <option value="">Toutes les PPD</option>
+            {orangePpdOptions.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+
+          <label className="inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={onlyOrangeMismatch} onChange={(e) => setOnlyOrangeMismatch(e.target.checked)} />
+            Afficher uniquement à vérifier
+          </label>
+
+          <button
+            onClick={() => loadOrangeComparison({ importId: selectedOrangeImportId, ppd: selectedOrangePpd, onlyMismatch: onlyOrangeMismatch })}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+          >
+            Lancer la comparaison
+          </button>
+
+          <div className="text-xs text-gray-600">{orangeRows.length} ligne(s) • Import: {selectedOrangeImportId || "dernier"}</div>
+        </div>
+
+        {orangeRows.length > 0 && (
+          <div className="overflow-x-auto border rounded">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr className="text-left">
+                  <th className="p-2">Num OT</th>
+                  <th className="p-2">PPD Orange</th>
+                  <th className="p-2">PPD Kyntus</th>
+                  <th className="p-2">Facturation Orange</th>
+                  <th className="p-2">Facturation Kyntus</th>
+                  <th className="p-2">Vérification</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orangeRows.slice(0, 300).map((r) => (
+                  <tr key={`${r.num_ot}-${r.numero_ppd_orange ?? ""}`} className="border-t">
+                    <td className="p-2 font-mono">{r.num_ot}</td>
+                    <td className="p-2">{r.numero_ppd_orange ?? "—"}</td>
+                    <td className="p-2">{r.numero_ppd_kyntus ?? "—"}</td>
+                    <td className="p-2">{r.facturation_orange ?? "—"}</td>
+                    <td className="p-2">{r.facturation_kyntus ?? "—"}</td>
+                    <td className="p-2">{r.a_verifier ? <Badge txt="A vérifier" kind="orange" /> : <Badge txt="OK" kind="green" />}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
       <div className="border rounded-lg overflow-auto bg-white mx-2">
         <table className="min-w-[1900px] w-full text-sm">
           <thead className="bg-gray-50">
@@ -937,9 +1070,17 @@ export default function DossiersList() {
       {importType && (
         <FileUploadModal
           type={importType}
-          onImported={() => {
+            onImported={(payload) => {
+            const t = importType;
             setImportType(null);
             load(filters);
+             if (payload?.importId) {
+              setSelectedOrangeImportId(payload.importId);
+              setSelectedOrangePpd("");
+            }
+            if (t === "ORANGE_PPD") {
+              loadOrangeComparison({ importId: payload?.importId });
+            }
           }}
           onClose={() => setImportType(null)}
         />

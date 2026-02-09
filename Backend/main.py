@@ -9,6 +9,7 @@ from routes.imports import router as imports_router
 from routes.export_dossiers import router as export_dossiers_router
 from routes.regles import router as regles_router
 from routes.debug_db import router as debug_router
+from routes.orange_ppd import router as orange_ppd_router
 
 app = FastAPI(title="Kyntus Facturation API")
 settings = get_settings()
@@ -28,6 +29,7 @@ app.include_router(imports_router)
 app.include_router(export_dossiers_router)
 app.include_router(regles_router)
 app.include_router(debug_router)
+app.include_router(orange_ppd_router)
 
 @app.get("/")
 def root():
