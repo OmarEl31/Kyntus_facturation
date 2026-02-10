@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { RefreshCw, Upload, Download, X, ChevronRight, Info, Layers } from "lucide-react";
+import type { OrangePpdTotals } from "@/services/dossiersApi";
+import { getOrangePpdTotals } from "@/services/dossiersApi";
+import { compareOrangePpdSummary } from "@/services/dossiersApi";
+
+
 
 import {
   compareOrangePpd,
@@ -15,6 +20,9 @@ import type { DossierFacturable, DossiersFilters, OrangePpdComparison, OrangePpd
 
 import FiltersBar from "./filters-bar";
 import FileUploadModal from "./file-upload-modal";
+
+
+
 
 type BadgeKind =
   | "green"
@@ -31,7 +39,6 @@ type BadgeKind =
   | "cyan"
   | "fuchsia"
   | "lime";
-
 const DETAILS_BTN_CLASS =
   "inline-flex items-center justify-center rounded-md px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap shadow-sm transition-colors";
 
@@ -246,6 +253,7 @@ function groupByPpd(items: DossierFacturable[]) {
 }
 
 export default function DossiersList() {
+  const [orangeTotals, setOrangeTotals] = useState<OrangePpdTotals | null>(null);
   const [items, setItems] = useState<DossierFacturable[]>([]);
   const [filters, setFilters] = useState<DossiersFilters>({ limit: 5000, offset: 0 });
   const [loading, setLoading] = useState(false);
@@ -307,18 +315,18 @@ export default function DossiersList() {
       setLoadingOrange(true);
       try {
         const importId = opts?.importId ?? selectedOrangeImportId;
-        const [rows, imports, ppds] = await Promise.all([
-          compareOrangePpd({
-            importId,
-            ppd: opts?.ppd ?? selectedOrangePpd,
-            onlyMismatch: opts?.onlyMismatch ?? onlyOrangeMismatch,
-          }),
-          listOrangeImports(30),
-          listOrangePpdOptions(importId || undefined),
-        ]);
-        setOrangeRows(rows);
-        setOrangeImports(imports);
-        setOrangePpdOptions(ppds);
+        const [rows, imports, ppds, totals] = await Promise.all([
+  compareOrangePpd({ importId, ppd: opts?.ppd ?? selectedOrangePpd, onlyMismatch: opts?.onlyMismatch ?? onlyOrangeMismatch }),
+  listOrangeImports(30),
+  listOrangePpdOptions(importId || undefined),
+  compareOrangePpdSummary(importId || undefined),
+]);
+setOrangeTotals(totals);
+
+setOrangeRows(rows);
+setOrangeImports(imports);
+setOrangePpdOptions(ppds);
+setOrangeTotals(totals);
         if (!selectedOrangeImportId && imports.length > 0) {
           setSelectedOrangeImportId(imports[0].import_id);
         }
@@ -596,6 +604,40 @@ export default function DossiersList() {
           >
             Lancer la comparaison
           </button>
+{orangeTotals && (
+  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+    <div className="rounded border p-3">
+      <div className="text-xs text-gray-500">Orange Total HT</div>
+      <div className="font-semibold">{orangeTotals.orange_total_ht?.toFixed(2)}</div>
+    </div>
+    <div className="rounded border p-3">
+      <div className="text-xs text-gray-500">Orange Total TTC</div>
+      <div className="font-semibold">{orangeTotals.orange_total_ttc?.toFixed(2)}</div>
+    </div>
+    <div className="rounded border p-3">
+      <div className="text-xs text-gray-500">Kyntus Total HT</div>
+      <div className="font-semibold">{orangeTotals.kyntus_total_ht?.toFixed(2)}</div>
+    </div>
+    <div className="rounded border p-3">
+      <div className="text-xs text-gray-500">Kyntus Total TTC</div>
+      <div className="font-semibold">{orangeTotals.kyntus_total_ttc?.toFixed(2)}</div>
+    </div>
+
+    <div className="rounded border p-3 md:col-span-2">
+      <div className="text-xs text-gray-500">Écart HT (Orange - Kyntus)</div>
+      <div className="font-semibold">
+        {(orangeTotals.orange_total_ht - orangeTotals.kyntus_total_ht).toFixed(2)}
+      </div>
+    </div>
+    <div className="rounded border p-3 md:col-span-2">
+      <div className="text-xs text-gray-500">Écart TTC (Orange - Kyntus)</div>
+      <div className="font-semibold">
+        {(orangeTotals.orange_total_ttc - orangeTotals.kyntus_total_ttc).toFixed(2)}
+      </div>
+    </div>
+  </div>
+)}
+
 
           <div className="text-xs text-gray-600">{orangeRows.length} ligne(s) • Import: {selectedOrangeImportId || "dernier"}</div>
         </div>
