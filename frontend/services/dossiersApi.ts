@@ -207,6 +207,55 @@ export interface OrangePpdComparison {
   mismatch_facturation: boolean;
   a_verifier: boolean;
 }
+export interface OrangePpdTotals {
+  import_id: string;
+  ppd?: string | null;
+  tva_rate: number;
+  orange_ht: number;
+  orange_ttc: number;
+  kyntus_ht: number;
+  kyntus_ttc: number;
+  delta_ht: number;
+  delta_ttc: number;
+  nb_lignes: number;
+  nb_a_verifier: number;
+  ok: boolean;
+}
+
+export async function getOrangePpdTotals(params: {
+  importId?: string;
+  ppd?: string;
+  onlyMismatch?: boolean;
+  tvaRate?: number;
+} = {}): Promise<OrangePpdTotals> {
+  const qs = new URLSearchParams();
+  if (params.importId) qs.set("import_id", params.importId);
+  if (params.ppd?.trim()) qs.set("ppd", params.ppd.trim());
+  if (params.onlyMismatch) qs.set("only_mismatch", "true");
+  if (typeof params.tvaRate === "number") qs.set("tva_rate", String(params.tvaRate));
+
+  const response = await fetch(`${API_URL}/api/orange-ppd/totals${qs.toString() ? `?${qs}` : ""}`);
+  if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
+  return response.json();
+}
+export interface OrangePpdTotals {
+  import_id: string;
+  orange_total_ht: number;
+  orange_total_ttc: number;
+  kyntus_total_ht: number;
+  kyntus_total_ttc: number;
+  pivot_total_somme_kyntus: number;
+  pivot_total_ttc: number;
+}
+
+export async function compareOrangePpdSummary(importId?: string): Promise<OrangePpdTotals> {
+  const qs = new URLSearchParams();
+  if (importId) qs.set("import_id", importId);
+
+  const response = await fetch(`${API_URL}/api/orange-ppd/compare-summary${qs.toString() ? `?${qs}` : ""}`);
+  if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
+  return response.json();
+}
 
 export async function listOrangeImports(limit = 20): Promise<OrangePpdImportSummary[]> {
   const response = await fetch(`${API_URL}/api/orange-ppd/imports?limit=${limit}`);

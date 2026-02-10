@@ -1,29 +1,22 @@
 # Backend/routes/orange_ppd.py
 from __future__ import annotations
 
-import csv
-import io
-import re
-import unicodedata
-import uuid
+import csv, io, re, unicodedata, uuid
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from database.connection import get_db
 from models.raw_orange_ppd_import import RawOrangePpdImport
 from models.raw_orange_ppd_row import RawOrangePpdRow
+from models.raw_orange_ppd_pivot_row import RawOrangePpdPivotRow  # ✅ NEW
 
 router = APIRouter(prefix="/api/orange-ppd", tags=["orange-ppd"])
 
-# --------------------
-# Helpers
-# --------------------
 
-def _norm_header(s: str) -> str:
+def _norm(s: str) -> str:
     s = (s or "").replace("\ufeff", "").strip().lower()
     s = unicodedata.normalize("NFKD", s)
     s = "".join(c for c in s if not unicodedata.combining(c))
@@ -32,14 +25,16 @@ def _norm_header(s: str) -> str:
     s = re.sub(r"_+", "_", s)
     return s.strip("_")
 
+
 def _normalize_row(raw: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for k, v in (raw or {}).items():
         if not k:
             continue
-        nk = _norm_header(k)
+        nk = _norm(k)
         out[nk] = v.strip() if isinstance(v, str) else v
     return out
+
 
 def _pick(h: dict[str, Any], *keys: str) -> str | None:
     for k in keys:
@@ -51,50 +46,28 @@ def _pick(h: dict[str, Any], *keys: str) -> str | None:
             return vv
     return None
 
+
 def _parse_decimal(v: str | None) -> Decimal | None:
-    if v is None:
+    if not v:
         return None
-    raw = str(v).replace("\u00a0", " ").strip()
-    if raw == "":
-        return None
-    raw = raw.replace("€", "").replace(" ", "").replace(",", ".")
+    raw = str(v).replace(" ", "").replace("\u00a0", "").replace("€", "").replace(",", ".").strip()
     try:
         return Decimal(raw)
     except InvalidOperation:
         return None
 
-def _resolve_import_id(db: Session, import_id: str | None) -> str | None:
-    if import_id:
-        return import_id
-    latest = (
-        db.query(RawOrangePpdImport)
-        .order_by(RawOrangePpdImport.imported_at.desc(), RawOrangePpdImport.import_id.desc())
-        .first()
-    )
-    return latest.import_id if latest else None
 
-# --------------------
-# Routes
-# --------------------
+def _norm_ot(v: str | None) -> str | None:
+    if not v:
+        return None
+    s = re.sub(r"\s+", "", str(v).strip())
+    if not s:
+        return None
+    if s.isdigit():
+        s2 = s.lstrip("0")
+        return s2 if s2 != "" else "0"
+    return s
 
-@router.get("/imports", response_model=list[dict[str, Any]])
-def list_orange_imports(limit: int = Query(20, ge=1, le=200), db: Session = Depends(get_db)):
-    rows = (
-        db.query(RawOrangePpdImport)
-        .order_by(RawOrangePpdImport.imported_at.desc(), RawOrangePpdImport.import_id.desc())
-        .limit(limit)
-        .all()
-    )
-    return [
-        {
-            "import_id": r.import_id,
-            "filename": r.filename,
-            "row_count": r.row_count,
-            "imported_by": r.imported_by,
-            "imported_at": r.imported_at.isoformat() if r.imported_at else None,
-        }
-        for r in rows
-    ]
 
 @router.post("/import")
 async def import_orange_ppd(
@@ -117,10 +90,9 @@ async def import_orange_ppd(
 
         new_import_id = str(uuid.uuid4())
 
-        # 1) insert import FIRST (fix FK)
         imp = RawOrangePpdImport(
             import_id=new_import_id,
-            filename=file.filename or "orange_ppd.csv",
+            filename=file.filename,
             imported_by=imported_by,
             row_count=0,
         )
@@ -128,19 +100,34 @@ async def import_orange_ppd(
         db.flush()
 
         rows: list[RawOrangePpdRow] = []
+        pivot_rows: list[RawOrangePpdPivotRow] = []
+
         for idx, raw in enumerate(reader, start=1):
             h = _normalize_row(raw)
 
-            # OT obligatoire pour une ligne exploitable "par OT"
-            numero_ot = _pick(h, "n_ot", "numero_ot", "ot", "ot_key", "num_ot")
+            numero_ot_raw = _pick(h, "n_ot", "numero_ot", "num_ot", "ot", "ot_key", "numéro_ot", "n_ot_")
+            numero_ot = _norm_ot(numero_ot_raw)
+
+            # pivot fields
+            etiquette = _pick(h, "etiquettes_de_lignes", "etiquettes_de_ligne", "etiquettes", "etiquette_lignes")
+            somme_kyntus = _parse_decimal(_pick(h, "somme_de_kyntus", "somme_kyntus", "somme"))
+
             if not numero_ot:
-                # lignes pivot/total -> pas des OTs -> on ne les traite pas ici
+                # ✅ ligne pivot / total
+                if etiquette or somme_kyntus is not None:
+                    pivot_rows.append(
+                        RawOrangePpdPivotRow(
+                            row_id=f"{new_import_id}:pivot:{idx}",
+                            import_id=new_import_id,
+                            etiquette_lignes=etiquette,
+                            somme_kyntus=somme_kyntus,
+                        )
+                    )
                 continue
 
-            row_id = f"{new_import_id}:{idx}"
             rows.append(
                 RawOrangePpdRow(
-                    row_id=row_id,
+                    row_id=f"{new_import_id}:{idx}",
                     import_id=new_import_id,
                     contrat=_pick(h, "contrat"),
                     numero_flux_pidi=_pick(h, "n_de_flux_pidi", "numero_flux_pidi", "flux_pidi"),
@@ -149,7 +136,7 @@ async def import_orange_ppd(
                     nd=_pick(h, "nd"),
                     code_secteur=_pick(h, "code_secteur"),
                     numero_ot=numero_ot,
-                    numero_att=_pick(h, "n_att", "numero_att", "numero_att_"),
+                    numero_att=_pick(h, "n_att", "numero_att", "n_att_"),
                     oeie=_pick(h, "oeie"),
                     code_gestion_chantier=_pick(h, "code_gestion_chantier"),
                     agence=_pick(h, "agence"),
@@ -158,9 +145,9 @@ async def import_orange_ppd(
                     entreprise=_pick(h, "entreprise"),
                     code_gpc=_pick(h, "code_gpc"),
                     code_etr=_pick(h, "code_etr"),
-                    chef_equipe=_pick(h, "chef_d_equipe", "chef_dequipe"),
+                    chef_equipe=_pick(h, "chef_d_equipe", "chef_dequipe", "chef_d_equipe_"),
                     ui=_pick(h, "ui"),
-                    numero_ppd=_pick(h, "n_ppd", "numero_ppd", "ppd"),
+                    numero_ppd=_pick(h, "n_ppd", "numero_ppd", "ppd", "numero_de_ppd", "n_ppd_"),
                     act_prod=_pick(h, "act_prod"),
                     numero_as=_pick(h, "n_as", "numero_as"),
                     centre=_pick(h, "centre"),
@@ -173,7 +160,7 @@ async def import_orange_ppd(
                     motif_facturation_degradee=_pick(h, "motif_de_facturation_degradee", "motif_facturation_degradee"),
                     categorie=_pick(h, "categorie"),
                     charge_affaire=_pick(h, "charge_d_affaire", "charge_affaire"),
-                    cause_acqui_rejet=_pick(h, "cause_acqui_rejet"),
+                    cause_acqui_rejet=_pick(h, "cause_acqui_rejet", "cause_acqui_rejet_"),
                     commentaire_acqui_rejet=_pick(h, "comment_acqui_rejet", "commentaire_acqui_rejet"),
                     attachement_cree=_pick(h, "attachement_cree"),
                     derniere_saisie=_pick(h, "derniere_saisie"),
@@ -195,14 +182,17 @@ async def import_orange_ppd(
             )
 
         if not rows:
-            raise HTTPException(status_code=400, 
-                                detail="Aucune ligne exploitable (colonne N° OT manquante ?)")
+            raise HTTPException(status_code=400, detail="Aucune ligne exploitable (colonne N° OT manquante ?)")
 
         imp.row_count = len(rows)
+
         db.bulk_save_objects(rows)
+        if pivot_rows:
+            db.bulk_save_objects(pivot_rows)
+
         db.commit()
 
-        return {"ok": True, "import_id": new_import_id, "rows": len(rows), "message": "Import Orange PPD terminé"}
+        return {"ok": True, "rows": len(rows), "count": len(rows), "importId": new_import_id, "import_id": new_import_id}
 
     except HTTPException:
         db.rollback()
@@ -210,55 +200,48 @@ async def import_orange_ppd(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
-
-@router.get("/ppd-options", response_model=list[str])
-def list_orange_ppd_values(import_id: str | None = Query(None), db: Session = Depends(get_db)):
-    resolved = _resolve_import_id(db, import_id)
-    if not resolved:
-        return []
-    q = text("""
-        SELECT DISTINCT btrim(numero_ppd) AS ppd
-        FROM canonique.orange_ppd_rows
-        WHERE import_id = :imp AND numero_ppd IS NOT NULL AND btrim(numero_ppd) <> ''
-        ORDER BY ppd
-    """)
-    rows = db.execute(q, {"imp": resolved}).fetchall()
-    return [r.ppd for r in rows]
-
-@router.get("/compare", response_model=list[dict[str, Any]])
-def compare_orange_ppd(
+@router.get("/compare-summary")
+def compare_summary(
     import_id: str | None = Query(None),
     ppd: str | None = Query(None),
-    only_mismatch: bool = Query(False),
     db: Session = Depends(get_db),
 ):
-    resolved = _resolve_import_id(db, import_id)
-    if not resolved:
-        return []
+    if not import_id:
+        latest = (
+            db.query(RawOrangePpdImport)
+            .order_by(RawOrangePpdImport.imported_at.desc(), RawOrangePpdImport.import_id.desc())
+            .first()
+        )
+        if not latest:
+            return {
+                "orange_total_ht": 0, "orange_total_ttc": 0,
+                "kyntus_total_ht": 0, "kyntus_total_ttc": 0,
+                "ecart_ht": 0, "ecart_ttc": 0,
+            }
+        import_id = latest.import_id
 
     sql = """
-      SELECT *
-      FROM canonique.v_orange_ppd_compare
-      WHERE import_id = :imp
-        AND (:ppd IS NULL OR btrim(numero_ppd_orange) = btrim(:ppd))
-        AND (:only_mismatch = false OR a_verifier = true)
-      ORDER BY num_ot
+    SELECT
+      COALESCE(SUM(facturation_orange_ht),0)  AS orange_total_ht,
+      COALESCE(SUM(facturation_orange_ttc),0) AS orange_total_ttc,
+      COALESCE(SUM(facturation_kyntus_ht),0)  AS kyntus_total_ht,
+      COALESCE(SUM(facturation_kyntus_ttc),0) AS kyntus_total_ttc
+    FROM canonique.v_orange_ppd_compare
+    WHERE import_id = :import_id
+      AND (:ppd IS NULL OR :ppd = '' OR numero_ppd_orange = :ppd OR numero_ppd_kyntus = :ppd);
     """
-    rows = db.execute(text(sql), {"imp": resolved, "ppd": ppd, "only_mismatch": only_mismatch}).mappings().all()
-    return [dict(r) for r in rows]
+    row = db.execute(text(sql), {"import_id": import_id, "ppd": ppd}).mappings().first() or {}
 
-@router.get("/totaux", response_model=dict[str, Any])
-def totaux_orange_ppd(import_id: str | None = Query(None), db: Session = Depends(get_db)):
-    resolved = _resolve_import_id(db, import_id)
-    if not resolved:
-        return {"import_id": None, "total_ht_orange": 0, "total_ht_kyntus": 0, "totals_ok": False}
+    orange_ht = float(row.get("orange_total_ht") or 0)
+    orange_ttc = float(row.get("orange_total_ttc") or 0)
+    kyntus_ht = float(row.get("kyntus_total_ht") or 0)
+    kyntus_ttc = float(row.get("kyntus_total_ttc") or 0)
 
-    row = db.execute(
-        text("SELECT * FROM canonique.v_orange_ppd_totaux WHERE import_id = :imp"),
-        {"imp": resolved},
-    ).mappings().first()
-
-    if not row:
-        return {"import_id": resolved, "total_ht_orange": 0, "total_ht_kyntus": 0, "totals_ok": False}
-
-    return dict(row)
+    return {
+        "orange_total_ht": orange_ht,
+        "orange_total_ttc": orange_ttc,
+        "kyntus_total_ht": kyntus_ht,
+        "kyntus_total_ttc": kyntus_ttc,
+        "ecart_ht": round(orange_ht - kyntus_ht, 2),
+        "ecart_ttc": round(orange_ttc - kyntus_ttc, 2),
+    }
