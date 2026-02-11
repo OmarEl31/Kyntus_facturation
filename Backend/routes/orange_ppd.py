@@ -1,20 +1,29 @@
 # Backend/routes/orange_ppd.py
 from __future__ import annotations
 
-import csv, io, re, unicodedata, uuid
+import csv
+import io
+import re
+import unicodedata
+import uuid
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from database.connection import get_db
 from models.raw_orange_ppd_import import RawOrangePpdImport
 from models.raw_orange_ppd_row import RawOrangePpdRow
-from models.raw_orange_ppd_pivot_row import RawOrangePpdPivotRow  # ✅ NEW
+from models.raw_orange_ppd_pivot_row import RawOrangePpdPivotRow
 
 router = APIRouter(prefix="/api/orange-ppd", tags=["orange-ppd"])
 
+
+# --------------------
+# Normalisation helpers
+# --------------------
 
 def _norm(s: str) -> str:
     s = (s or "").replace("\ufeff", "").strip().lower()
@@ -69,6 +78,21 @@ def _norm_ot(v: str | None) -> str | None:
     return s
 
 
+def _resolve_import_id(db: Session, import_id: str | None) -> str | None:
+    if import_id:
+        return import_id
+    latest = (
+        db.query(RawOrangePpdImport)
+        .order_by(RawOrangePpdImport.imported_at.desc(), RawOrangePpdImport.import_id.desc())
+        .first()
+    )
+    return latest.import_id if latest else None
+
+
+# --------------------
+# Routes
+# --------------------
+
 @router.post("/import")
 async def import_orange_ppd(
     file: UploadFile = File(...),
@@ -100,41 +124,61 @@ async def import_orange_ppd(
         db.flush()
 
         rows: list[RawOrangePpdRow] = []
-        pivot_rows: list[RawOrangePpdPivotRow] = []
+        pivots: list[RawOrangePpdPivotRow] = []
 
         for idx, raw in enumerate(reader, start=1):
             h = _normalize_row(raw)
 
-            numero_ot_raw = _pick(h, "n_ot", "numero_ot", "num_ot", "ot", "ot_key", "numéro_ot", "n_ot_")
+            # -------- pivot detection (lignes totaux / étiquettes) --------
+            etiquette = _pick(h, "etiquettes_de_lignes", "etiquettes_de_ligne", "etiquettes", "etiquette_lignes")
+            somme_kyntus = _parse_decimal(_pick(h, "somme_de_kyntus", "somme_kyntus", "total_kyntus"))
+
+            # OT normal
+            numero_ot_raw = _pick(h, "n_ot", "numero_ot", "num_ot", "ot", "ot_key", "num_ot_orange", "num_ot")
             numero_ot = _norm_ot(numero_ot_raw)
 
-            # pivot fields
-            etiquette = _pick(h, "etiquettes_de_lignes", "etiquettes_de_ligne", "etiquettes", "etiquette_lignes")
-            somme_kyntus = _parse_decimal(_pick(h, "somme_de_kyntus", "somme_kyntus", "somme"))
+            row_id = f"{new_import_id}:{idx}"
 
-            if not numero_ot:
-                # ✅ ligne pivot / total
-                if etiquette or somme_kyntus is not None:
-                    pivot_rows.append(
-                        RawOrangePpdPivotRow(
-                            row_id=f"{new_import_id}:pivot:{idx}",
-                            import_id=new_import_id,
-                            etiquette_lignes=etiquette,
-                            somme_kyntus=somme_kyntus,
-                        )
+            # pivot row = pas d'OT mais a une étiquette / somme
+            if not numero_ot and (etiquette or somme_kyntus is not None):
+                pivots.append(
+                    RawOrangePpdPivotRow(
+                        row_id=row_id,
+                        import_id=new_import_id,
+                        etiquette_lignes=etiquette,
+                        somme_kyntus=somme_kyntus,
                     )
+                )
                 continue
+
+            # ignore lignes vides inutiles
+            if not numero_ot:
+                continue
+
+            # PPD (ajout de variantes réalistes)
+            numero_ppd = _pick(
+                h,
+                "n_ppd",
+                "numero_ppd",
+                "ppd",
+                "ppd_orange",
+                "ppd_orange_",
+                "ppd_orange_num",
+                "ppd_orange_libelle",
+            )
 
             rows.append(
                 RawOrangePpdRow(
-                    row_id=f"{new_import_id}:{idx}",
+                    row_id=row_id,
                     import_id=new_import_id,
+
                     contrat=_pick(h, "contrat"),
                     numero_flux_pidi=_pick(h, "n_de_flux_pidi", "numero_flux_pidi", "flux_pidi"),
-                    type_pidi=_pick(h, "type", "type_pidi"),
+                    type_pidi=_pick(h, "type"),
                     statut=_pick(h, "statut"),
                     nd=_pick(h, "nd"),
                     code_secteur=_pick(h, "code_secteur"),
+
                     numero_ot=numero_ot,
                     numero_att=_pick(h, "n_att", "numero_att", "n_att_"),
                     oeie=_pick(h, "oeie"),
@@ -147,32 +191,39 @@ async def import_orange_ppd(
                     code_etr=_pick(h, "code_etr"),
                     chef_equipe=_pick(h, "chef_d_equipe", "chef_dequipe", "chef_d_equipe_"),
                     ui=_pick(h, "ui"),
-                    numero_ppd=_pick(h, "n_ppd", "numero_ppd", "ppd", "numero_de_ppd", "n_ppd_"),
+
+                    numero_ppd=numero_ppd,
                     act_prod=_pick(h, "act_prod"),
                     numero_as=_pick(h, "n_as", "numero_as"),
                     centre=_pick(h, "centre"),
                     date_debut=_pick(h, "date_debut"),
                     date_fin=_pick(h, "date_fin"),
                     numero_cac=_pick(h, "n_cac", "numero_cac"),
+
                     commentaire_interne=_pick(h, "commentaire_interne"),
                     commentaire_oeie=_pick(h, "commentaire_oeie"),
                     commentaire_attelem=_pick(h, "commentaire_attelem"),
                     motif_facturation_degradee=_pick(h, "motif_de_facturation_degradee", "motif_facturation_degradee"),
+
                     categorie=_pick(h, "categorie"),
                     charge_affaire=_pick(h, "charge_d_affaire", "charge_affaire"),
                     cause_acqui_rejet=_pick(h, "cause_acqui_rejet", "cause_acqui_rejet_"),
                     commentaire_acqui_rejet=_pick(h, "comment_acqui_rejet", "commentaire_acqui_rejet"),
+
                     attachement_cree=_pick(h, "attachement_cree"),
                     derniere_saisie=_pick(h, "derniere_saisie"),
                     attachement_definitif=_pick(h, "attachement_definitif"),
                     attachement_valide=_pick(h, "attachement_valide"),
+
                     pointe_ppd=_pick(h, "pointe_ppd"),
                     planification_ot=_pick(h, "planification_ot"),
                     validation_interventions=_pick(h, "validation_des_interventions", "validation_interventions"),
                     bordereau=_pick(h, "bordereau"),
-                    ht=_parse_decimal(_pick(h, "ht")),
+
+                    ht=_parse_decimal(_pick(h, "ht", "total_ht")),
                     bordereau_sst=_pick(h, "bordereau_sst"),
                     ht_sst=_parse_decimal(_pick(h, "ht_sst")),
+
                     marge=_pick(h, "marge"),
                     coeff=_pick(h, "coeff"),
                     kyntus=_pick(h, "kyntus"),
@@ -181,18 +232,27 @@ async def import_orange_ppd(
                 )
             )
 
-        if not rows:
-            raise HTTPException(status_code=400, detail="Aucune ligne exploitable (colonne N° OT manquante ?)")
+        if not rows and not pivots:
+            raise HTTPException(status_code=400, detail="Aucune ligne exploitable")
 
         imp.row_count = len(rows)
 
-        db.bulk_save_objects(rows)
-        if pivot_rows:
-            db.bulk_save_objects(pivot_rows)
+        if rows:
+            db.bulk_save_objects(rows)
+        if pivots:
+            db.bulk_save_objects(pivots)
 
         db.commit()
 
-        return {"ok": True, "rows": len(rows), "count": len(rows), "importId": new_import_id, "import_id": new_import_id}
+        return {
+            "ok": True,
+            "rows": len(rows),
+            "pivots": len(pivots),
+            "count": len(rows),
+            "message": "Import Orange PPD terminé",
+            "importId": new_import_id,
+            "import_id": new_import_id,
+        }
 
     except HTTPException:
         db.rollback()
@@ -200,10 +260,86 @@ async def import_orange_ppd(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/imports")
+def list_imports(limit: int = Query(20, ge=1, le=200), db: Session = Depends(get_db)):
+    q = (
+        db.query(RawOrangePpdImport)
+        .order_by(RawOrangePpdImport.imported_at.desc(), RawOrangePpdImport.import_id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "import_id": it.import_id,
+            "filename": it.filename,
+            "row_count": it.row_count,
+            "imported_by": it.imported_by,
+            "imported_at": it.imported_at.isoformat() if it.imported_at else None,
+        }
+        for it in q
+    ]
+
+
+@router.get("/ppd-options")
+def ppd_options(import_id: str | None = Query(None), db: Session = Depends(get_db)):
+    import_id = _resolve_import_id(db, import_id)
+    if not import_id:
+        return []
+    sql = """
+    SELECT DISTINCT NULLIF(BTRIM(numero_ppd),'') AS ppd
+    FROM canonique.orange_ppd_rows
+    WHERE import_id = :import_id
+      AND NULLIF(BTRIM(numero_ppd),'') IS NOT NULL
+    ORDER BY 1;
+    """
+    rows = db.execute(text(sql), {"import_id": import_id}).all()
+    return [r[0] for r in rows if r and r[0]]
+
+
+@router.get("/compare")
+def compare_orange_ppd(
+    import_id: str | None = Query(None),
+    ppd: str | None = Query(None),
+    only_mismatch: bool = Query(False),
+    db: Session = Depends(get_db),
+):
+    import_id = _resolve_import_id(db, import_id)
+    if not import_id:
+        return []
+
+    sql = """
+    SELECT
+      import_id,
+      num_ot,
+      numero_ppd_orange,
+      numero_ppd_kyntus,
+      facturation_orange_ht AS facturation_orange,
+      facturation_kyntus_ht AS facturation_kyntus,
+      statut_final,
+      statut_croisement,
+      dossier_trouve,
+      mismatch_ppd,
+      mismatch_facturation,
+      a_verifier
+    FROM canonique.v_orange_ppd_compare
+    WHERE import_id = :import_id
+      AND (:ppd IS NULL OR :ppd = '' OR numero_ppd_orange = :ppd OR numero_ppd_kyntus = :ppd)
+      AND (:only_mismatch = false OR a_verifier = true)
+    ORDER BY a_verifier DESC, facturation_orange_ht DESC NULLS LAST
+    LIMIT 5000;
+    """
+    res = db.execute(
+        text(sql),
+        {"import_id": import_id, "ppd": ppd, "only_mismatch": only_mismatch},
+    ).mappings().all()
+    return [dict(r) for r in res]
+
+
 @router.get("/compare-summary")
 def compare_summary(
     import_id: str | None = Query(None),
-    ppd: str | None = Query(None),
     db: Session = Depends(get_db),
 ):
     if not import_id:
@@ -225,23 +361,11 @@ def compare_summary(
       COALESCE(SUM(facturation_orange_ht),0)  AS orange_total_ht,
       COALESCE(SUM(facturation_orange_ttc),0) AS orange_total_ttc,
       COALESCE(SUM(facturation_kyntus_ht),0)  AS kyntus_total_ht,
-      COALESCE(SUM(facturation_kyntus_ttc),0) AS kyntus_total_ttc
+      COALESCE(SUM(facturation_kyntus_ttc),0) AS kyntus_total_ttc,
+      COALESCE(SUM(facturation_orange_ht),0)  - COALESCE(SUM(facturation_kyntus_ht),0)  AS ecart_ht,
+      COALESCE(SUM(facturation_orange_ttc),0) - COALESCE(SUM(facturation_kyntus_ttc),0) AS ecart_ttc
     FROM canonique.v_orange_ppd_compare
-    WHERE import_id = :import_id
-      AND (:ppd IS NULL OR :ppd = '' OR numero_ppd_orange = :ppd OR numero_ppd_kyntus = :ppd);
+    WHERE import_id = :import_id;
     """
-    row = db.execute(text(sql), {"import_id": import_id, "ppd": ppd}).mappings().first() or {}
-
-    orange_ht = float(row.get("orange_total_ht") or 0)
-    orange_ttc = float(row.get("orange_total_ttc") or 0)
-    kyntus_ht = float(row.get("kyntus_total_ht") or 0)
-    kyntus_ttc = float(row.get("kyntus_total_ttc") or 0)
-
-    return {
-        "orange_total_ht": orange_ht,
-        "orange_total_ttc": orange_ttc,
-        "kyntus_total_ht": kyntus_ht,
-        "kyntus_total_ttc": kyntus_ttc,
-        "ecart_ht": round(orange_ht - kyntus_ht, 2),
-        "ecart_ttc": round(orange_ttc - kyntus_ttc, 2),
-    }
+    row = db.execute(text(sql), {"import_id": import_id}).mappings().first()
+    return dict(row or {})

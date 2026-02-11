@@ -1,66 +1,83 @@
-from sqlalchemy import Column, Numeric, Text, TIMESTAMP, func
+# Backend/models/raw_orange_ppd_row.py
+from __future__ import annotations
+
+from sqlalchemy import Column, String, DateTime, Numeric, ForeignKey, func
+from sqlalchemy.orm import relationship
+
 from database.connection import Base
+
 
 class RawOrangePpdRow(Base):
     __tablename__ = "orange_ppd_rows"
     __table_args__ = {"schema": "canonique"}
 
-    row_id = Column(Text, primary_key=True)
-    import_id = Column(Text, nullable=False, index=True)
+    row_id = Column(String, primary_key=True)
 
-    contrat = Column(Text)
-    numero_flux_pidi = Column(Text)
-    type_pidi = Column(Text)
-    statut = Column(Text)
-    nd = Column(Text)
-    code_secteur = Column(Text)
+    import_id = Column(
+        String,
+        ForeignKey("canonique.orange_ppd_imports.import_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
-    numero_ot = Column(Text, index=True)
-    numero_att = Column(Text)
-    oeie = Column(Text)
-    code_gestion_chantier = Column(Text)
-    agence = Column(Text)
-    code_postal = Column(Text)
-    code_insee = Column(Text)
-    entreprise = Column(Text)
-    code_gpc = Column(Text)
-    code_etr = Column(Text)
-    chef_equipe = Column(Text)
-    ui = Column(Text)
+    imported_at = Column(DateTime, nullable=False, server_default=func.now())
 
-    numero_ppd = Column(Text, index=True)
-    act_prod = Column(Text)
-    numero_as = Column(Text)
-    centre = Column(Text)
-    date_debut = Column(Text)
-    date_fin = Column(Text)
-    numero_cac = Column(Text)
+    contrat = Column(String, nullable=True)
+    numero_flux_pidi = Column(String, nullable=True)
+    type_pidi = Column(String, nullable=True)
+    statut = Column(String, nullable=True)
+    nd = Column(String, nullable=True)
+    code_secteur = Column(String, nullable=True)
 
-    commentaire_interne = Column(Text)
-    commentaire_oeie = Column(Text)
-    commentaire_attelem = Column(Text)
-    motif_facturation_degradee = Column(Text)
-    categorie = Column(Text)
-    charge_affaire = Column(Text)
-    cause_acqui_rejet = Column(Text)
-    commentaire_acqui_rejet = Column(Text)
+    numero_ot = Column(String, nullable=True, index=True)  # OT normalisée côté import
+    numero_att = Column(String, nullable=True)
+    oeie = Column(String, nullable=True)
+    code_gestion_chantier = Column(String, nullable=True)
+    agence = Column(String, nullable=True)
+    code_postal = Column(String, nullable=True)
+    code_insee = Column(String, nullable=True)
+    entreprise = Column(String, nullable=True)
+    code_gpc = Column(String, nullable=True)
+    code_etr = Column(String, nullable=True)
+    chef_equipe = Column(String, nullable=True)
+    ui = Column(String, nullable=True)
 
-    attachement_cree = Column(Text)
-    derniere_saisie = Column(Text)
-    attachement_definitif = Column(Text)
-    attachement_valide = Column(Text)
-    pointe_ppd = Column(Text)
-    planification_ot = Column(Text)
-    validation_interventions = Column(Text)
+    numero_ppd = Column(String, nullable=True)  # important pour comparaison PPD
+    act_prod = Column(String, nullable=True)
+    numero_as = Column(String, nullable=True)
+    centre = Column(String, nullable=True)
+    date_debut = Column(String, nullable=True)
+    date_fin = Column(String, nullable=True)
+    numero_cac = Column(String, nullable=True)
 
-    bordereau = Column(Text)
-    ht = Column(Numeric(12, 2))
-    bordereau_sst = Column(Text)
-    ht_sst = Column(Numeric(12, 2))
-    marge = Column(Text)
-    coeff = Column(Text)
-    kyntus = Column(Text)
-    liste_articles = Column(Text)
-    encours = Column(Text)
+    commentaire_interne = Column(String, nullable=True)
+    commentaire_oeie = Column(String, nullable=True)
+    commentaire_attelem = Column(String, nullable=True)
 
-    imported_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
+    motif_facturation_degradee = Column(String, nullable=True)
+    categorie = Column(String, nullable=True)
+    charge_affaire = Column(String, nullable=True)
+    cause_acqui_rejet = Column(String, nullable=True)
+    commentaire_acqui_rejet = Column(String, nullable=True)
+
+    attachement_cree = Column(String, nullable=True)
+    derniere_saisie = Column(String, nullable=True)
+    attachement_definitif = Column(String, nullable=True)
+    attachement_valide = Column(String, nullable=True)
+
+    pointe_ppd = Column(String, nullable=True)
+    planification_ot = Column(String, nullable=True)
+    validation_interventions = Column(String, nullable=True)
+    bordereau = Column(String, nullable=True)
+
+    ht = Column(Numeric(12, 2), nullable=True)
+    bordereau_sst = Column(String, nullable=True)
+    ht_sst = Column(Numeric(12, 2), nullable=True)
+
+    marge = Column(String, nullable=True)
+    coeff = Column(String, nullable=True)
+    kyntus = Column(String, nullable=True)
+    liste_articles = Column(String, nullable=True)
+    encours = Column(String, nullable=True)
+
+    import_batch = relationship("RawOrangePpdImport", back_populates="rows")

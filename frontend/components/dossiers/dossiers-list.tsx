@@ -2,27 +2,29 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { RefreshCw, Upload, Download, X, ChevronRight, Info, Layers } from "lucide-react";
-import type { OrangePpdTotals } from "@/services/dossiersApi";
-import { getOrangePpdTotals } from "@/services/dossiersApi";
-import { compareOrangePpdSummary } from "@/services/dossiersApi";
-
-
 
 import {
   compareOrangePpd,
+  compareOrangePpdSummary,
   exportDossiersXlsx,
   listDossiers,
   listOrangeImports,
   listOrangePpdOptions,
   statutsFinal,
 } from "@/services/dossiersApi";
-import type { DossierFacturable, DossiersFilters, OrangePpdComparison, OrangePpdImportSummary } from "@/services/dossiersApi";
+
+import type {
+  DossierFacturable,
+  DossiersFilters,
+  OrangePpdComparison,
+  OrangePpdImportSummary,
+  OrangePpdCompareSummary,
+} from "@/services/dossiersApi";
 
 import FiltersBar from "./filters-bar";
 import FileUploadModal from "./file-upload-modal";
 
-
-
+const PAGE_SIZE = 300;
 
 type BadgeKind =
   | "green"
@@ -39,6 +41,7 @@ type BadgeKind =
   | "cyan"
   | "fuchsia"
   | "lime";
+
 const DETAILS_BTN_CLASS =
   "inline-flex items-center justify-center rounded-md px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap shadow-sm transition-colors";
 
@@ -118,19 +121,6 @@ function statutFinalKind(s?: string | null): BadgeKind {
   if (s === "CONDITIONNEL") return "yellow";
   if (s === "A_VERIFIER") return "orange";
   return "gray";
-}
-function prettyJson(v: any): string {
-  if (v === null || v === undefined) return "—";
-  if (typeof v === "string") return v;
-  try { return JSON.stringify(v, null, 2); } catch { return String(v); }
-}
-
-function hasValue(v: any): boolean {
-  if (v === null || v === undefined) return false;
-  if (typeof v === "string") return v.trim().length > 0;
-  if (Array.isArray(v)) return v.length > 0;
-  if (typeof v === "object") return Object.keys(v).length > 0;
-  return true;
 }
 
 function motifKind(m?: string | null): BadgeKind {
@@ -252,35 +242,99 @@ function groupByPpd(items: DossierFacturable[]) {
   return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 }
 
+function fmtNum(v: any): string {
+  if (v === null || v === undefined) return "—";
+  const n = Number(v);
+  if (Number.isNaN(n)) return "—";
+  return n.toFixed(2);
+}
+
+function Pagination({
+  page,
+  pageCount,
+  onPrev,
+  onNext,
+  onGo,
+}: {
+  page: number;
+  pageCount: number;
+  onPrev: () => void;
+  onNext: () => void;
+  onGo: (p: number) => void;
+}) {
+  if (pageCount <= 1) return null;
+  return (
+    <div className="flex items-center gap-2 text-sm">
+      <button className="border rounded px-2 py-1 hover:bg-gray-50 disabled:opacity-50" onClick={onPrev} disabled={page <= 1}>
+        Précédent
+      </button>
+      <span className="text-gray-700">
+        Page <b>{page}</b> / {pageCount}
+      </span>
+      <button className="border rounded px-2 py-1 hover:bg-gray-50 disabled:opacity-50" onClick={onNext} disabled={page >= pageCount}>
+        Suivant
+      </button>
+      <select
+        className="border rounded px-2 py-1"
+        value={page}
+        onChange={(e) => onGo(Number(e.target.value))}
+      >
+        {Array.from({ length: pageCount }, (_, i) => i + 1).map((p) => (
+          <option key={p} value={p}>
+            {p}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 export default function DossiersList() {
-  const [orangeTotals, setOrangeTotals] = useState<OrangePpdTotals | null>(null);
+  // --- affichage des sections (choix utilisateur) ---
+  const [showOrangeSection, setShowOrangeSection] = useState(false);
+  const [showDossiersSection, setShowDossiersSection] = useState(true);
+
+  // --- dossiers ---
   const [items, setItems] = useState<DossierFacturable[]>([]);
+  const [rawItems, setRawItems] = useState<DossierFacturable[]>([]);
   const [filters, setFilters] = useState<DossiersFilters>({ limit: 5000, offset: 0 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-   const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | "ORANGE_PPD" | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [grouped, setGrouped] = useState(false);
+
+  // pagination dossiers
+  const [dossiersPage, setDossiersPage] = useState(1);
+
+  // --- drawer ---
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selected, setSelected] = useState<DossierFacturable | null>(null);
+  const [showRawTerrain, setShowRawTerrain] = useState(false);
+
+  // --- imports ---
+  const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | "ORANGE_PPD" | null>(null);
+
+  // --- orange ---
   const [orangeRows, setOrangeRows] = useState<OrangePpdComparison[]>([]);
   const [orangeImports, setOrangeImports] = useState<OrangePpdImportSummary[]>([]);
   const [selectedOrangeImportId, setSelectedOrangeImportId] = useState<string>("");
   const [orangePpdOptions, setOrangePpdOptions] = useState<string[]>([]);
   const [selectedOrangePpd, setSelectedOrangePpd] = useState<string>("");
   const [onlyOrangeMismatch, setOnlyOrangeMismatch] = useState(false);
+  const [orangeStatusFilter, setOrangeStatusFilter] = useState<"ALL" | "OK" | "A_VERIFIER">("ALL");
   const [loadingOrange, setLoadingOrange] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
 
-  const [grouped, setGrouped] = useState(false);
+  // pagination orange
+  const [orangePage, setOrangePage] = useState(1);
 
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [selected, setSelected] = useState<DossierFacturable | null>(null);
-  const [showRawTerrain, setShowRawTerrain] = useState(false);
+  // summary (HT/TTC totals)
+  const [orangeSummary, setOrangeSummary] = useState<OrangePpdCompareSummary | null>(null);
 
-  const [rawItems, setRawItems] = useState<DossierFacturable[]>([]);
-
+  // --------- LOAD DOSSIERS ----------
   const load = useCallback(
     async (f?: DossiersFilters) => {
       const activeFilters = f ?? filters;
 
-      // ✅ afficher tout (dans la limite backend)
       const normalized: DossiersFilters = {
         ...activeFilters,
         limit: 5000,
@@ -293,7 +347,8 @@ export default function DossiersList() {
       try {
         const data = await listDossiers(normalized);
         setRawItems(data);
-        setItems(data); // ✅ plus de refiltrage local PPD (ça cassait)
+        setItems(data);
+        setDossiersPage(1);
         if (f) setFilters(normalized);
       } catch (e: any) {
         setRawItems([]);
@@ -303,30 +358,40 @@ export default function DossiersList() {
         setLoading(false);
       }
     },
-    [filters]
+    []
   );
 
   useEffect(() => {
     load({ limit: 5000, offset: 0 });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
- const loadOrangeComparison = useCallback(
+  }, [load]);
+
+  // --------- LOAD ORANGE ----------
+  const loadOrangeComparison = useCallback(
     async (opts?: { importId?: string; ppd?: string; onlyMismatch?: boolean }) => {
       setLoadingOrange(true);
+      setError(null);
       try {
         const importId = opts?.importId ?? selectedOrangeImportId;
-        const [rows, imports, ppds, totals] = await Promise.all([
-  compareOrangePpd({ importId, ppd: opts?.ppd ?? selectedOrangePpd, onlyMismatch: opts?.onlyMismatch ?? onlyOrangeMismatch }),
-  listOrangeImports(30),
-  listOrangePpdOptions(importId || undefined),
-  compareOrangePpdSummary(importId || undefined),
-]);
-setOrangeTotals(totals);
+        const ppd = opts?.ppd ?? selectedOrangePpd;
+        const mismatch = opts?.onlyMismatch ?? onlyOrangeMismatch;
 
-setOrangeRows(rows);
-setOrangeImports(imports);
-setOrangePpdOptions(ppds);
-setOrangeTotals(totals);
+        const [rows, imports, ppds, summary] = await Promise.all([
+          compareOrangePpd({
+            importId,
+            ppd: ppd || undefined,
+            onlyMismatch: mismatch,
+          }),
+          listOrangeImports(30),
+          listOrangePpdOptions(importId || undefined),
+          compareOrangePpdSummary({ importId, ppd: ppd || undefined }),
+        ]);
+
+        setOrangeRows(rows);
+        setOrangeImports(imports);
+        setOrangePpdOptions(ppds);
+        setOrangeSummary(summary);
+        setOrangePage(1);
+
         if (!selectedOrangeImportId && imports.length > 0) {
           setSelectedOrangeImportId(imports[0].import_id);
         }
@@ -336,9 +401,10 @@ setOrangeTotals(totals);
         setLoadingOrange(false);
       }
     },
-    [onlyOrangeMismatch, selectedOrangeImportId, selectedOrangePpd]
+    [selectedOrangeImportId, selectedOrangePpd, onlyOrangeMismatch]
   );
 
+  // escape drawer
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
@@ -353,6 +419,7 @@ setOrangeTotals(totals);
     return () => window.removeEventListener("keydown", onKey);
   }, [drawerOpen]);
 
+  // ------- derived -------
   const ppdOptions = useMemo(() => {
     const xs = rawItems
       .map((d) => (d.numero_ppd ?? "").trim())
@@ -392,8 +459,8 @@ setOrangeTotals(totals);
   }, [items]);
 
   async function exportExcel() {
-    setIsExporting(true);    try {
-      // ✅ export selon filtres actuels
+    setIsExporting(true);
+    try {
       await exportDossiersXlsx(filters);
     } catch (e: any) {
       setError(e?.message || "Export Excel échoué.");
@@ -426,6 +493,31 @@ setOrangeTotals(totals);
     return parsePidiBrutCodes(selected.liste_articles);
   }, [selected]);
 
+  // --- Orange filtered + paginated ---
+  const orangeRowsFiltered = useMemo(() => {
+    let rows = orangeRows;
+
+    if (orangeStatusFilter === "OK") rows = rows.filter((r) => !r.a_verifier);
+    if (orangeStatusFilter === "A_VERIFIER") rows = rows.filter((r) => !!r.a_verifier);
+
+    return rows;
+  }, [orangeRows, orangeStatusFilter]);
+
+  const orangePageCount = useMemo(() => Math.max(1, Math.ceil(orangeRowsFiltered.length / PAGE_SIZE)), [orangeRowsFiltered.length]);
+
+  const orangeRowsPage = useMemo(() => {
+    const start = (orangePage - 1) * PAGE_SIZE;
+    return orangeRowsFiltered.slice(start, start + PAGE_SIZE);
+  }, [orangeRowsFiltered, orangePage]);
+
+  // --- Dossiers paginated (non grouped only) ---
+  const dossiersPageCount = useMemo(() => Math.max(1, Math.ceil(items.length / PAGE_SIZE)), [items.length]);
+
+  const dossiersPageItems = useMemo(() => {
+    const start = (dossiersPage - 1) * PAGE_SIZE;
+    return items.slice(start, start + PAGE_SIZE);
+  }, [items, dossiersPage]);
+
   return (
     <div className="space-y-4">
       <style jsx>{`
@@ -448,10 +540,21 @@ setOrangeTotals(totals);
 
       {error && <div className="mx-2 p-2 rounded border border-red-200 bg-red-50 text-sm text-red-700">{error}</div>}
 
+      {/* ACTIONS + choix affichage */}
       <div className="flex items-center justify-between px-2">
         <div className="text-sm text-gray-600">{loading ? "Chargement…" : `${items.length} dossiers`}</div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* toggle sections */}
+          <label className="inline-flex items-center gap-2 text-sm border rounded px-3 py-2 bg-white">
+            <input type="checkbox" checked={showDossiersSection} onChange={(e) => setShowDossiersSection(e.target.checked)} />
+            Afficher Dossiers
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm border rounded px-3 py-2 bg-white">
+            <input type="checkbox" checked={showOrangeSection} onChange={(e) => setShowOrangeSection(e.target.checked)} />
+            Afficher Orange
+          </label>
+
           <button
             onClick={() => load(filters)}
             disabled={loading}
@@ -485,7 +588,8 @@ setOrangeTotals(totals);
             <Upload className="h-4 w-4" />
             PIDI
           </button>
- <button
+
+          <button
             onClick={() => setImportType("ORANGE_PPD")}
             className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50"
           >
@@ -495,7 +599,8 @@ setOrangeTotals(totals);
 
           <button
             onClick={exportExcel}
-            disabled={isExporting || items.length === 0}            className="inline-flex items-center gap-2 px-3 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+            disabled={isExporting || items.length === 0}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
             title="Exporter en Excel (xlsx)"
           >
             <Download className="h-4 w-4" />
@@ -504,6 +609,7 @@ setOrangeTotals(totals);
         </div>
       </div>
 
+      {/* STATS */}
       <div className="px-2 space-y-3">
         <div>
           <div className="text-sm text-gray-700 mb-2">Répartition (croisement) :</div>
@@ -550,377 +656,421 @@ setOrangeTotals(totals);
           </div>
         )}
       </div>
-   <div className="mx-2 rounded-lg border bg-white p-4 space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold">Comparaison Kyntus vs Orange (Num OT)</div>
-            <div className="text-xs text-gray-500">Vérification des écarts PPD et facturation entre Kyntus et Orange (isolation par import).</div>
+
+      {/* ORANGE SECTION */}
+      {showOrangeSection && (
+        <div className="mx-2 rounded-lg border bg-white p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold">Comparaison Kyntus vs Orange (Num OT)</div>
+              <div className="text-xs text-gray-500">
+                Comparaison PPD + facturation (HT/TTC) entre Orange et Kyntus (par import).
+              </div>
+            </div>
+
+            <button
+              onClick={() => loadOrangeComparison()}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50"
+              disabled={loadingOrange}
+            >
+              <RefreshCw className="h-4 w-4" />
+              {loadingOrange ? "Chargement..." : "Actualiser Orange"}
+            </button>
           </div>
-          <button
-            onClick={() => loadOrangeComparison()}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50"
-            disabled={loadingOrange}
-          >
-            <RefreshCw className="h-4 w-4" />
-            {loadingOrange ? "Chargement..." : "Actualiser Orange"}
-          </button>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <select
-            value={selectedOrangeImportId}
-            onChange={(e) => setSelectedOrangeImportId(e.target.value)}
-            className="border rounded px-2 py-2 text-sm min-w-[360px]"
-          >
-            <option value="">Dernier import</option>
-            {orangeImports.map((it) => (
-              <option key={it.import_id} value={it.import_id}>
-                {(it.imported_at ?? "?").replace("T", " ").slice(0, 19)} • {it.filename ?? "sans nom"} • {it.row_count ?? 0} lignes
-              </option>
-            ))}
-          </select>
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              value={selectedOrangeImportId}
+              onChange={(e) => setSelectedOrangeImportId(e.target.value)}
+              className="border rounded px-2 py-2 text-sm min-w-[360px]"
+            >
+              <option value="">Dernier import</option>
+              {orangeImports.map((it) => (
+                <option key={it.import_id} value={it.import_id}>
+                  {(it.imported_at ?? "?").replace("T", " ").slice(0, 19)} • {it.filename ?? "sans nom"} • {it.row_count ?? 0} lignes
+                </option>
+              ))}
+            </select>
 
-          <select
-            value={selectedOrangePpd}
-            onChange={(e) => setSelectedOrangePpd(e.target.value)}
-            className="border rounded px-2 py-2 text-sm min-w-[240px]"
-          >
-            <option value="">Toutes les PPD</option>
-            {orangePpdOptions.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
+            <select
+              value={selectedOrangePpd}
+              onChange={(e) => setSelectedOrangePpd(e.target.value)}
+              className="border rounded px-2 py-2 text-sm min-w-[240px]"
+            >
+              <option value="">Toutes les PPD</option>
+              {orangePpdOptions.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
 
-          <label className="inline-flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={onlyOrangeMismatch} onChange={(e) => setOnlyOrangeMismatch(e.target.checked)} />
-            Afficher uniquement à vérifier
-          </label>
+            <label className="inline-flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={onlyOrangeMismatch}
+                onChange={(e) => setOnlyOrangeMismatch(e.target.checked)}
+              />
+              API: uniquement à vérifier
+            </label>
 
-          <button
-            onClick={() => loadOrangeComparison({ importId: selectedOrangeImportId, ppd: selectedOrangePpd, onlyMismatch: onlyOrangeMismatch })}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
-          >
-            Lancer la comparaison
-          </button>
-{orangeTotals && (
-  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-    <div className="rounded border p-3">
-      <div className="text-xs text-gray-500">Orange Total HT</div>
-      <div className="font-semibold">{orangeTotals.orange_total_ht?.toFixed(2)}</div>
-    </div>
-    <div className="rounded border p-3">
-      <div className="text-xs text-gray-500">Orange Total TTC</div>
-      <div className="font-semibold">{orangeTotals.orange_total_ttc?.toFixed(2)}</div>
-    </div>
-    <div className="rounded border p-3">
-      <div className="text-xs text-gray-500">Kyntus Total HT</div>
-      <div className="font-semibold">{orangeTotals.kyntus_total_ht?.toFixed(2)}</div>
-    </div>
-    <div className="rounded border p-3">
-      <div className="text-xs text-gray-500">Kyntus Total TTC</div>
-      <div className="font-semibold">{orangeTotals.kyntus_total_ttc?.toFixed(2)}</div>
-    </div>
+            <select
+              className="border rounded px-2 py-2 text-sm"
+              value={orangeStatusFilter}
+              onChange={(e) => {
+                setOrangeStatusFilter(e.target.value as any);
+                setOrangePage(1);
+              }}
+              title="Filtrer l'affichage du tableau"
+            >
+              <option value="ALL">Table: tout</option>
+              <option value="OK">Table: OK</option>
+              <option value="A_VERIFIER">Table: A vérifier</option>
+            </select>
 
-    <div className="rounded border p-3 md:col-span-2">
-      <div className="text-xs text-gray-500">Écart HT (Orange - Kyntus)</div>
-      <div className="font-semibold">
-        {(orangeTotals.orange_total_ht - orangeTotals.kyntus_total_ht).toFixed(2)}
-      </div>
-    </div>
-    <div className="rounded border p-3 md:col-span-2">
-      <div className="text-xs text-gray-500">Écart TTC (Orange - Kyntus)</div>
-      <div className="font-semibold">
-        {(orangeTotals.orange_total_ttc - orangeTotals.kyntus_total_ttc).toFixed(2)}
-      </div>
-    </div>
-  </div>
-)}
+            <button
+              onClick={() =>
+                loadOrangeComparison({
+                  importId: selectedOrangeImportId,
+                  ppd: selectedOrangePpd,
+                  onlyMismatch: onlyOrangeMismatch,
+                })
+              }
+              className="inline-flex items-center gap-2 px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+            >
+              Lancer la comparaison
+            </button>
 
+            {/* Totaux */}
+            {orangeSummary && (
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-2 w-full md:w-auto">
+                <div className="border rounded p-2 text-xs">
+                  <div className="text-gray-500">Orange Total HT</div>
+                  <div className="font-semibold">{fmtNum(orangeSummary.orange_total_ht)}</div>
+                </div>
+                <div className="border rounded p-2 text-xs">
+                  <div className="text-gray-500">Orange Total TTC</div>
+                  <div className="font-semibold">{fmtNum(orangeSummary.orange_total_ttc)}</div>
+                </div>
+                <div className="border rounded p-2 text-xs">
+                  <div className="text-gray-500">Kyntus Total HT</div>
+                  <div className="font-semibold">{fmtNum(orangeSummary.kyntus_total_ht)}</div>
+                </div>
+                <div className="border rounded p-2 text-xs">
+                  <div className="text-gray-500">Kyntus Total TTC</div>
+                  <div className="font-semibold">{fmtNum(orangeSummary.kyntus_total_ttc)}</div>
+                </div>
+                <div className="border rounded p-2 text-xs col-span-1 md:col-span-2">
+                  <div className="text-gray-500">Écart HT (Orange - Kyntus)</div>
+                  <div className="font-semibold">{fmtNum(orangeSummary.ecart_ht)}</div>
+                </div>
+                <div className="border rounded p-2 text-xs col-span-1 md:col-span-2">
+                  <div className="text-gray-500">Écart TTC (Orange - Kyntus)</div>
+                  <div className="font-semibold">{fmtNum(orangeSummary.ecart_ttc)}</div>
+                </div>
+              </div>
+            )}
 
-          <div className="text-xs text-gray-600">{orangeRows.length} ligne(s) • Import: {selectedOrangeImportId || "dernier"}</div>
-        </div>
+            <div className="text-xs text-gray-600">
+              {orangeRowsFiltered.length} ligne(s) filtrées • Total brut: {orangeRows.length} • Import:{" "}
+              {selectedOrangeImportId || "dernier"}
+            </div>
 
-        {orangeRows.length > 0 && (
-          <div className="overflow-x-auto border rounded">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr className="text-left">
-                  <th className="p-2">Num OT</th>
-                  <th className="p-2">PPD Orange</th>
-                  <th className="p-2">PPD Kyntus</th>
-                  <th className="p-2">Facturation Orange</th>
-                  <th className="p-2">Facturation Kyntus</th>
-                  <th className="p-2">Vérification</th>
-                </tr>
-              </thead>
-              <tbody>
-                {orangeRows.slice(0, 300).map((r) => (
-                  <tr key={`${r.num_ot}-${r.numero_ppd_orange ?? ""}`} className="border-t">
-                    <td className="p-2 font-mono">{r.num_ot}</td>
-                    <td className="p-2">{r.numero_ppd_orange ?? "—"}</td>
-                    <td className="p-2">{r.numero_ppd_kyntus ?? "—"}</td>
-                    <td className="p-2">{r.facturation_orange ?? "—"}</td>
-                    <td className="p-2">{r.facturation_kyntus ?? "—"}</td>
-                    <td className="p-2">{r.a_verifier ? <Badge txt="A vérifier" kind="orange" /> : <Badge txt="OK" kind="green" />}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <Pagination
+              page={orangePage}
+              pageCount={orangePageCount}
+              onPrev={() => setOrangePage((p) => Math.max(1, p - 1))}
+              onNext={() => setOrangePage((p) => Math.min(orangePageCount, p + 1))}
+              onGo={(p) => setOrangePage(p)}
+            />
           </div>
-        )}
-      </div>
-      <div className="border rounded-lg overflow-auto bg-white mx-2">
-        <table className="min-w-[1900px] w-full text-sm">
-          <thead className="bg-gray-50">
-            <tr className="text-left">
-              <th className="p-3">OT</th>
-              <th className="p-3">ND</th>
-              <th className="p-3">PPD</th>
-              <th className="p-3">Attachement</th>
-              <th className="p-3">Act.</th>
-              <th className="p-3">Prod.</th>
-              <th className="p-3">Code cible</th>
-              <th className="p-3">Clôture</th>
-              <th className="p-3">Terrain</th>
-              <th className="p-3">Règle</th>
-              <th className="p-3">Statut final</th>
-              <th className="p-3">Croisement</th>
-              <th className="p-3">Praxedo</th>
-              <th className="p-3">PIDI</th>
-              <th className="p-3">Actions</th>
-              <th className="p-3">Planifiée</th>
-              <th className="p-3"></th>
-            </tr>
-          </thead>
 
-          <tbody>
-            {items.length === 0 ? (
-              <tr>
-                <td colSpan={17} className="p-6 text-center text-gray-500">
-                  {loading ? "Chargement…" : "Aucun dossier à afficher."}
-                </td>
+          {/* Table Orange paginée */}
+          {orangeRowsFiltered.length > 0 && (
+            <div className="overflow-x-auto border rounded">
+              <table className="min-w-[1400px] w-full text-sm">
+               <thead className="bg-gray-50">
+  <tr className="text-left">
+    <th className="p-2">Num OT</th>
+    <th className="p-2">Orange HT</th>
+    <th className="p-2">Kyntus HT</th>
+    <th className="p-2">Diff HT</th>
+    <th className="p-2">Orange TTC</th>
+    <th className="p-2">Kyntus TTC</th>
+    <th className="p-2">Diff TTC</th>
+    <th className="p-2">Vérification</th>
+  </tr>
+</thead>
+
+<tbody>
+  {orangeRowsPage.map((r) => (
+    <tr key={r.num_ot} className="border-t">
+      <td className="p-2 font-mono">{r.num_ot}</td>
+
+      <td className="p-2">{fmtNum(r.facturation_orange_ht)}</td>
+      <td className="p-2">{fmtNum(r.facturation_kyntus_ht)}</td>
+      <td className="p-2">{fmtNum(r.diff_ht)}</td>
+
+      <td className="p-2">{fmtNum(r.facturation_orange_ttc)}</td>
+      <td className="p-2">{fmtNum(r.facturation_kyntus_ttc)}</td>
+      <td className="p-2">{fmtNum(r.diff_ttc)}</td>
+
+      <td className="p-2">
+        {r.a_verifier ? <Badge txt="A vérifier" kind="orange" /> : <Badge txt="OK" kind="green" />}
+      </td>
+    </tr>
+  ))}
+</tbody>
+              </table>
+            </div>
+          )}
+
+          {orangeRowsFiltered.length === 0 && (
+            <div className="text-sm text-gray-500">Aucune ligne à afficher (selon les filtres).</div>
+          )}
+        </div>
+      )}
+
+      {/* DOSSIERS SECTION */}
+      {showDossiersSection && (
+        <div className="border rounded-lg overflow-auto bg-white mx-2">
+          <div className="flex items-center justify-between px-3 py-2 border-b bg-gray-50">
+            <div className="text-sm font-semibold">Dossiers</div>
+            {!grouped && (
+              <Pagination
+                page={dossiersPage}
+                pageCount={dossiersPageCount}
+                onPrev={() => setDossiersPage((p) => Math.max(1, p - 1))}
+                onNext={() => setDossiersPage((p) => Math.min(dossiersPageCount, p + 1))}
+                onGo={(p) => setDossiersPage(p)}
+              />
+            )}
+          </div>
+
+          <table className="min-w-[1900px] w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr className="text-left">
+                <th className="p-3">OT</th>
+                <th className="p-3">ND</th>
+                <th className="p-3">PPD</th>
+                <th className="p-3">Attachement</th>
+                <th className="p-3">Act.</th>
+                <th className="p-3">Prod.</th>
+                <th className="p-3">Code cible</th>
+                <th className="p-3">Clôture</th>
+                <th className="p-3">Terrain</th>
+                <th className="p-3">Règle</th>
+                <th className="p-3">Statut final</th>
+                <th className="p-3">Croisement</th>
+                <th className="p-3">Praxedo</th>
+                <th className="p-3">PIDI</th>
+                <th className="p-3">Actions</th>
+                <th className="p-3">Planifiée</th>
+                <th className="p-3"></th>
               </tr>
-            ) : !grouped ? (
-              items.map((d) => {
-                const sf = d.statut_final ?? "NON_FACTURABLE";
-                const cro = d.statut_croisement ?? "INCONNU";
-                const terrainLabel = d.mode_passage ? d.mode_passage : "—";
+            </thead>
 
-                return (
-                  <tr
-                    key={d.key_match}
-                    className="border-t hover:bg-gray-50/50 cursor-pointer"
-                    onClick={() => openDrawer(d)}
-                    title="Clique pour ouvrir les détails"
-                  >
-                    <td className="p-3 font-mono">{d.ot_key ?? "—"}</td>
-                    <td className="p-3 font-mono">{d.nd_global ?? "—"}</td>
-                    <td className="p-3 font-mono">{d.numero_ppd ?? "—"}</td>
-                    <td className="p-3">{d.attachement_valide ?? "—"}</td>
-                    <td className="p-3">{d.activite_code ?? "—"}</td>
-                    <td className="p-3">{d.produit_code ?? "—"}</td>
-                    <td className="p-3">{d.code_cible ?? "—"}</td>
-
-                    <td className="p-3">
-                      {d.code_cloture_code ? (
-                        <Badge txt={d.code_cloture_code} kind={clotureKind(d.code_cloture_code)} />
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-
-                    <td className="p-3">
-                      {d.mode_passage ? (
-                        <Badge txt={terrainLabel} kind={terrainKind(d.mode_passage)} />
-                      ) : (
-                        <span className="text-gray-500">—</span>
-                      )}
-                    </td>
-
-                    <td className="p-3">
-                      <div className="max-w-[520px] truncate" title={d.libelle_regle ?? ""}>
-                        {d.libelle_regle ?? "—"}
-                      </div>
-                    </td>
-
-                    <td className="p-3">
-                      <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-2">
-                          <Badge txt={sf.replaceAll("_", " ")} kind={statutFinalKind(sf)} />
-                          {d.is_previsite ? <Badge txt="Prévisite" kind="slate" /> : null}
-                        </div>
-
-                        {sf === "A_VERIFIER" && d.motif_verification ? (
-                          <div className="flex items-center gap-2">
-                            <Badge txt={motifLabel(d.motif_verification)} kind={motifKind(d.motif_verification)} />
-                          </div>
-                        ) : null}
-                      </div>
-                    </td>
-
-                    <td className="p-3">
-                      <Badge txt={cro.replaceAll("_", " ")} kind={croisementKind(cro)} />
-                    </td>
-
-                    <td className="p-3">
-                      {d.statut_praxedo ? (
-                        <Badge
-                          txt={praxedoLabel(d)}
-                          kind={d.statut_praxedo.toLowerCase().includes("valid") ? "green" : "gray"}
-                        />
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-
-                    <td className="p-3">
-                      <span className="text-purple-700 font-medium">{pidiLabel(d)}</span>
-                    </td>
-
-                    <td className="p-3">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openDrawer(d);
-                        }}
-                        data-details-btn
-                        className={DETAILS_BTN_CLASS}
-                        title="Ouvrir les détails du dossier"
-                      >
-                        Détails
-                      </button>
-                    </td>
-
-                    <td className="p-3">{formatFrDate(d.date_planifiee)}</td>
-
-                    <td className="p-3">
-                      <ChevronRight className="h-4 w-4 text-gray-400" />
-                    </td>
-                  </tr>
-                );
-              })
-            ) : (
-              groupedEntries.map(([ppd, rows]) => (
-                <tr key={ppd} className="border-t">
-                  <td colSpan={17} className="p-0">
-                    <div className="px-3 py-2 bg-gray-50 border-b flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span className="text-sm font-semibold text-gray-900">
-                          PPD: <span className="font-mono">{ppd}</span>
-                        </span>
-                        <span className="text-xs text-gray-600">{rows.length} dossiers</span>
-                      </div>
-                    </div>
-
-                    <div className="overflow-auto">
-                      <table className="min-w-[1900px] w-full text-sm">
-                        <tbody>
-                          {rows.map((d) => {
-                            const sf = d.statut_final ?? "NON_FACTURABLE";
-                            const cro = d.statut_croisement ?? "INCONNU";
-                            const terrainLabel = d.mode_passage ? d.mode_passage : "—";
-
-                            return (
-                              <tr
-                                key={d.key_match}
-                                className="border-b hover:bg-gray-50/50 cursor-pointer"
-                                onClick={() => openDrawer(d)}
-                              >
-                                <td className="p-3 font-mono w-[160px]">{d.ot_key ?? "—"}</td>
-                                <td className="p-3 font-mono w-[160px]">{d.nd_global ?? "—"}</td>
-                                <td className="p-3 font-mono w-[160px]">{d.numero_ppd ?? "—"}</td>
-                                <td className="p-3 w-[160px]">{d.attachement_valide ?? "—"}</td>
-                                <td className="p-3 w-[80px]">{d.activite_code ?? "—"}</td>
-                                <td className="p-3 w-[80px]">{d.produit_code ?? "—"}</td>
-                                <td className="p-3 w-[120px]">{d.code_cible ?? "—"}</td>
-
-                                <td className="p-3 w-[110px]">
-                                  {d.code_cloture_code ? (
-                                    <Badge txt={d.code_cloture_code} kind={clotureKind(d.code_cloture_code)} />
-                                  ) : (
-                                    "—"
-                                  )}
-                                </td>
-
-                                <td className="p-3 w-[120px]">
-                                  {d.mode_passage ? (
-                                    <Badge txt={terrainLabel} kind={terrainKind(d.mode_passage)} />
-                                  ) : (
-                                    <span className="text-gray-500">—</span>
-                                  )}
-                                </td>
-
-                                <td className="p-3 w-[520px]">
-                                  <div className="max-w-[520px] truncate" title={d.libelle_regle ?? ""}>
-                                    {d.libelle_regle ?? "—"}
-                                  </div>
-                                </td>
-
-                                <td className="p-3 w-[220px]">
-                                  <div className="flex flex-col gap-1">
-                                    <div className="flex items-center gap-2">
-                                      <Badge txt={sf.replaceAll("_", " ")} kind={statutFinalKind(sf)} />
-                                      {d.is_previsite ? <Badge txt="Prévisite" kind="slate" /> : null}
-                                    </div>
-                                    {sf === "A_VERIFIER" && d.motif_verification ? (
-                                      <Badge txt={motifLabel(d.motif_verification)} kind={motifKind(d.motif_verification)} />
-                                    ) : null}
-                                  </div>
-                                </td>
-
-                                <td className="p-3 w-[140px]">
-                                  <Badge txt={cro.replaceAll("_", " ")} kind={croisementKind(cro)} />
-                                </td>
-
-                                <td className="p-3 w-[140px]">
-                                  {d.statut_praxedo ? (
-                                    <Badge
-                                      txt={praxedoLabel(d)}
-                                      kind={d.statut_praxedo.toLowerCase().includes("valid") ? "green" : "gray"}
-                                    />
-                                  ) : (
-                                    "—"
-                                  )}
-                                </td>
-
-                                <td className="p-3 w-[160px]">
-                                  <span className="text-purple-700 font-medium">{pidiLabel(d)}</span>
-                                </td>
-
-                                <td className="p-3">
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      openDrawer(d);
-                                    }}
-                                    data-details-btn
-                                    className={DETAILS_BTN_CLASS}
-                                  >
-                                    Détails
-                                  </button>
-                                </td>
-
-                                <td className="p-3 w-[170px]">{formatFrDate(d.date_planifiee)}</td>
-                                <td className="p-3 w-[40px]">
-                                  <ChevronRight className="h-4 w-4 text-gray-400" />
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+            <tbody>
+              {items.length === 0 ? (
+                <tr>
+                  <td colSpan={17} className="p-6 text-center text-gray-500">
+                    {loading ? "Chargement…" : "Aucun dossier à afficher."}
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+              ) : !grouped ? (
+                dossiersPageItems.map((d) => {
+                  const sf = d.statut_final ?? "NON_FACTURABLE";
+                  const cro = d.statut_croisement ?? "INCONNU";
+                  const terrainLabel = d.mode_passage ? d.mode_passage : "—";
 
-      {/* Drawer Détails */}
+                  return (
+                    <tr
+                      key={d.key_match}
+                      className="border-t hover:bg-gray-50/50 cursor-pointer"
+                      onClick={() => openDrawer(d)}
+                      title="Clique pour ouvrir les détails"
+                    >
+                      <td className="p-3 font-mono">{d.ot_key ?? "—"}</td>
+                      <td className="p-3 font-mono">{d.nd_global ?? "—"}</td>
+                      <td className="p-3 font-mono">{d.numero_ppd ?? "—"}</td>
+                      <td className="p-3">{d.attachement_valide ?? "—"}</td>
+                      <td className="p-3">{d.activite_code ?? "—"}</td>
+                      <td className="p-3">{d.produit_code ?? "—"}</td>
+                      <td className="p-3">{d.code_cible ?? "—"}</td>
+
+                      <td className="p-3">
+                        {d.code_cloture_code ? <Badge txt={d.code_cloture_code} kind={clotureKind(d.code_cloture_code)} /> : "—"}
+                      </td>
+
+                      <td className="p-3">
+                        {d.mode_passage ? <Badge txt={terrainLabel} kind={terrainKind(d.mode_passage)} /> : <span className="text-gray-500">—</span>}
+                      </td>
+
+                      <td className="p-3">
+                        <div className="max-w-[520px] truncate" title={d.libelle_regle ?? ""}>
+                          {d.libelle_regle ?? "—"}
+                        </div>
+                      </td>
+
+                      <td className="p-3">
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2">
+                            <Badge txt={sf.replaceAll("_", " ")} kind={statutFinalKind(sf)} />
+                            {d.is_previsite ? <Badge txt="Prévisite" kind="slate" /> : null}
+                          </div>
+
+                          {sf === "A_VERIFIER" && d.motif_verification ? (
+                            <div className="flex items-center gap-2">
+                              <Badge txt={motifLabel(d.motif_verification)} kind={motifKind(d.motif_verification)} />
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+
+                      <td className="p-3">
+                        <Badge txt={cro.replaceAll("_", " ")} kind={croisementKind(cro)} />
+                      </td>
+
+                      <td className="p-3">
+                        {d.statut_praxedo ? (
+                          <Badge txt={praxedoLabel(d)} kind={d.statut_praxedo.toLowerCase().includes("valid") ? "green" : "gray"} />
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+
+                      <td className="p-3">
+                        <span className="text-purple-700 font-medium">{pidiLabel(d)}</span>
+                      </td>
+
+                      <td className="p-3">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openDrawer(d);
+                          }}
+                          data-details-btn
+                          className={DETAILS_BTN_CLASS}
+                          title="Ouvrir les détails du dossier"
+                        >
+                          Détails
+                        </button>
+                      </td>
+
+                      <td className="p-3">{formatFrDate(d.date_planifiee)}</td>
+
+                      <td className="p-3">
+                        <ChevronRight className="h-4 w-4 text-gray-400" />
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                groupedEntries.map(([ppd, rows]) => (
+                  <tr key={ppd} className="border-t">
+                    <td colSpan={17} className="p-0">
+                      <div className="px-3 py-2 bg-gray-50 border-b flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-semibold text-gray-900">
+                            PPD: <span className="font-mono">{ppd}</span>
+                          </span>
+                          <span className="text-xs text-gray-600">{rows.length} dossiers</span>
+                        </div>
+                      </div>
+
+                      <div className="overflow-auto">
+                        <table className="min-w-[1900px] w-full text-sm">
+                          <tbody>
+                            {rows.map((d) => {
+                              const sf = d.statut_final ?? "NON_FACTURABLE";
+                              const cro = d.statut_croisement ?? "INCONNU";
+                              const terrainLabel = d.mode_passage ? d.mode_passage : "—";
+
+                              return (
+                                <tr key={d.key_match} className="border-b hover:bg-gray-50/50 cursor-pointer" onClick={() => openDrawer(d)}>
+                                  <td className="p-3 font-mono w-[160px]">{d.ot_key ?? "—"}</td>
+                                  <td className="p-3 font-mono w-[160px]">{d.nd_global ?? "—"}</td>
+                                  <td className="p-3 font-mono w-[160px]">{d.numero_ppd ?? "—"}</td>
+                                  <td className="p-3 w-[160px]">{d.attachement_valide ?? "—"}</td>
+                                  <td className="p-3 w-[80px]">{d.activite_code ?? "—"}</td>
+                                  <td className="p-3 w-[80px]">{d.produit_code ?? "—"}</td>
+                                  <td className="p-3 w-[120px]">{d.code_cible ?? "—"}</td>
+
+                                  <td className="p-3 w-[110px]">
+                                    {d.code_cloture_code ? <Badge txt={d.code_cloture_code} kind={clotureKind(d.code_cloture_code)} /> : "—"}
+                                  </td>
+
+                                  <td className="p-3 w-[120px]">
+                                    {d.mode_passage ? <Badge txt={terrainLabel} kind={terrainKind(d.mode_passage)} /> : <span className="text-gray-500">—</span>}
+                                  </td>
+
+                                  <td className="p-3 w-[520px]">
+                                    <div className="max-w-[520px] truncate" title={d.libelle_regle ?? ""}>
+                                      {d.libelle_regle ?? "—"}
+                                    </div>
+                                  </td>
+
+                                  <td className="p-3 w-[220px]">
+                                    <div className="flex flex-col gap-1">
+                                      <div className="flex items-center gap-2">
+                                        <Badge txt={sf.replaceAll("_", " ")} kind={statutFinalKind(sf)} />
+                                        {d.is_previsite ? <Badge txt="Prévisite" kind="slate" /> : null}
+                                      </div>
+                                      {sf === "A_VERIFIER" && d.motif_verification ? (
+                                        <Badge txt={motifLabel(d.motif_verification)} kind={motifKind(d.motif_verification)} />
+                                      ) : null}
+                                    </div>
+                                  </td>
+
+                                  <td className="p-3 w-[140px]">
+                                    <Badge txt={cro.replaceAll("_", " ")} kind={croisementKind(cro)} />
+                                  </td>
+
+                                  <td className="p-3 w-[140px]">
+                                    {d.statut_praxedo ? (
+                                      <Badge txt={praxedoLabel(d)} kind={d.statut_praxedo.toLowerCase().includes("valid") ? "green" : "gray"} />
+                                    ) : (
+                                      "—"
+                                    )}
+                                  </td>
+
+                                  <td className="p-3 w-[160px]">
+                                    <span className="text-purple-700 font-medium">{pidiLabel(d)}</span>
+                                  </td>
+
+                                  <td className="p-3">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openDrawer(d);
+                                      }}
+                                      data-details-btn
+                                      className={DETAILS_BTN_CLASS}
+                                    >
+                                      Détails
+                                    </button>
+                                  </td>
+
+                                  <td className="p-3 w-[170px]">{formatFrDate(d.date_planifiee)}</td>
+                                  <td className="p-3 w-[40px]">
+                                    <ChevronRight className="h-4 w-4 text-gray-400" />
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Drawer */}
       {drawerOpen && selected && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/30" onClick={closeDrawer} />
@@ -936,14 +1086,8 @@ setOrangeTotals(totals);
                 </div>
 
                 <div className="flex flex-wrap gap-2 pt-1">
-                  <Badge
-                    txt={(selected.statut_final ?? "—").replaceAll("_", " ")}
-                    kind={statutFinalKind(selected.statut_final)}
-                  />
-                  <Badge
-                    txt={(selected.statut_croisement ?? "INCONNU").replaceAll("_", " ")}
-                    kind={croisementKind(selected.statut_croisement)}
-                  />
+                  <Badge txt={(selected.statut_final ?? "—").replaceAll("_", " ")} kind={statutFinalKind(selected.statut_final)} />
+                  <Badge txt={(selected.statut_croisement ?? "INCONNU").replaceAll("_", " ")} kind={croisementKind(selected.statut_croisement)} />
                   {selected.is_previsite ? <Badge txt="Prévisite" kind="slate" /> : null}
                   {selected.motif_verification ? (
                     <Badge txt={motifLabel(selected.motif_verification)} kind={motifKind(selected.motif_verification)} />
@@ -1010,11 +1154,7 @@ setOrangeTotals(totals);
                   <div className="rounded-lg border bg-gray-50 p-3">
                     <div className="text-xs text-gray-500 mb-1">Mode passage</div>
                     <div className="text-sm font-medium">
-                      {selected.mode_passage ? (
-                        <Badge txt={selected.mode_passage} kind={terrainKind(selected.mode_passage)} />
-                      ) : (
-                        <span className="text-gray-500">—</span>
-                      )}
+                      {selected.mode_passage ? <Badge txt={selected.mode_passage} kind={terrainKind(selected.mode_passage)} /> : <span className="text-gray-500">—</span>}
                     </div>
                   </div>
                   <div className="rounded-lg border bg-gray-50 p-3">
@@ -1109,19 +1249,25 @@ setOrangeTotals(totals);
         </div>
       )}
 
+      {/* Import modal */}
       {importType && (
         <FileUploadModal
           type={importType}
-            onImported={(payload) => {
+          onImported={(payload) => {
             const t = importType;
             setImportType(null);
+
+            // on recharge les dossiers, mais on n'affiche pas automatiquement Orange
             load(filters);
-             if (payload?.importId) {
+
+            // si import Orange, on met à jour l'importId sélectionné, mais on laisse l'utilisateur lancer la comparaison
+            if (payload?.importId && t === "ORANGE_PPD") {
               setSelectedOrangeImportId(payload.importId);
               setSelectedOrangePpd("");
-            }
-            if (t === "ORANGE_PPD") {
-              loadOrangeComparison({ importId: payload?.importId });
+              // On refresh juste la liste des imports/options pour que l’import apparaisse dans le dropdown
+              listOrangeImports(30).then(setOrangeImports).catch(() => {});
+              listOrangePpdOptions(payload.importId).then(setOrangePpdOptions).catch(() => {});
+              // pas de loadOrangeComparison ici (conformément à ton besoin)
             }
           }}
           onClose={() => setImportType(null)}
