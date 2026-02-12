@@ -300,72 +300,58 @@ def ppd_options(import_id: str | None = Query(None), db: Session = Depends(get_d
 
 @router.get("/compare")
 def compare_orange_ppd(
-    import_id: str | None = Query(None),
-    ppd: str | None = Query(None),
-    only_mismatch: bool = Query(False),
+    import_id: str | None = Query(default=None),
+    ppd: str | None = Query(default=None),
+    only_mismatch: bool = Query(default=False),
     db: Session = Depends(get_db),
 ):
-    import_id = _resolve_import_id(db, import_id)
-    if not import_id:
-        return []
-
     sql = """
     SELECT
       import_id,
       num_ot,
       numero_ppd_orange,
-      numero_ppd_kyntus,
-      facturation_orange_ht AS facturation_orange,
-      facturation_kyntus_ht AS facturation_kyntus,
-      statut_final,
-      statut_croisement,
-      dossier_trouve,
-      mismatch_ppd,
-      mismatch_facturation,
+      facturation_orange_ht,
+      facturation_orange_ttc,
+      facturation_kyntus_ht,
+      facturation_kyntus_ttc,
+      diff_ht,
+      diff_ttc,
       a_verifier
     FROM canonique.v_orange_ppd_compare
-    WHERE import_id = :import_id
-      AND (:ppd IS NULL OR :ppd = '' OR numero_ppd_orange = :ppd OR numero_ppd_kyntus = :ppd)
-      AND (:only_mismatch = false OR a_verifier = true)
-    ORDER BY a_verifier DESC, facturation_orange_ht DESC NULLS LAST
-    LIMIT 5000;
+    WHERE (:import_id IS NULL OR import_id = :import_id)
+      AND (:ppd IS NULL OR numero_ppd_orange = :ppd)
+      AND (:only_mismatch = FALSE OR a_verifier = TRUE)
+    ORDER BY num_ot
     """
-    res = db.execute(
+    rows = db.execute(
         text(sql),
         {"import_id": import_id, "ppd": ppd, "only_mismatch": only_mismatch},
     ).mappings().all()
-    return [dict(r) for r in res]
+
+    return [dict(r) for r in rows]
 
 
 @router.get("/compare-summary")
-def compare_summary(
-    import_id: str | None = Query(None),
+def compare_orange_ppd_summary(
+    import_id: str | None = Query(default=None),
+    ppd: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    if not import_id:
-        latest = (
-            db.query(RawOrangePpdImport)
-            .order_by(RawOrangePpdImport.imported_at.desc(), RawOrangePpdImport.import_id.desc())
-            .first()
-        )
-        if not latest:
-            return {
-                "orange_total_ht": 0, "orange_total_ttc": 0,
-                "kyntus_total_ht": 0, "kyntus_total_ttc": 0,
-                "ecart_ht": 0, "ecart_ttc": 0,
-            }
-        import_id = latest.import_id
-
     sql = """
     SELECT
-      COALESCE(SUM(facturation_orange_ht),0)  AS orange_total_ht,
-      COALESCE(SUM(facturation_orange_ttc),0) AS orange_total_ttc,
-      COALESCE(SUM(facturation_kyntus_ht),0)  AS kyntus_total_ht,
-      COALESCE(SUM(facturation_kyntus_ttc),0) AS kyntus_total_ttc,
-      COALESCE(SUM(facturation_orange_ht),0)  - COALESCE(SUM(facturation_kyntus_ht),0)  AS ecart_ht,
-      COALESCE(SUM(facturation_orange_ttc),0) - COALESCE(SUM(facturation_kyntus_ttc),0) AS ecart_ttc
+      COALESCE(SUM(facturation_orange_ht), 0)::numeric(12,2)  AS orange_total_ht,
+      COALESCE(SUM(facturation_orange_ttc), 0)::numeric(12,2) AS orange_total_ttc,
+      COALESCE(SUM(facturation_kyntus_ht), 0)::numeric(12,2)  AS kyntus_total_ht,
+      COALESCE(SUM(facturation_kyntus_ttc), 0)::numeric(12,2) AS kyntus_total_ttc,
+      (COALESCE(SUM(facturation_orange_ht), 0) - COALESCE(SUM(facturation_kyntus_ht), 0))::numeric(12,2)  AS ecart_ht,
+      (COALESCE(SUM(facturation_orange_ttc), 0) - COALESCE(SUM(facturation_kyntus_ttc), 0))::numeric(12,2) AS ecart_ttc
     FROM canonique.v_orange_ppd_compare
-    WHERE import_id = :import_id;
+    WHERE (:import_id IS NULL OR import_id = :import_id)
+      AND (:ppd IS NULL OR numero_ppd_orange = :ppd)
     """
-    row = db.execute(text(sql), {"import_id": import_id}).mappings().first()
-    return dict(row or {})
+    row = db.execute(text(sql), {"import_id": import_id, "ppd": ppd}).mappings().first()
+    return dict(row) if row else {
+        "orange_total_ht": 0, "orange_total_ttc": 0,
+        "kyntus_total_ht": 0, "kyntus_total_ttc": 0,
+        "ecart_ht": 0, "ecart_ttc": 0
+    }

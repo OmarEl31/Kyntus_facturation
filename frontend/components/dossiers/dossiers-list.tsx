@@ -40,7 +40,8 @@ type BadgeKind =
   | "slate"
   | "cyan"
   | "fuchsia"
-  | "lime";
+  | "lime"
+  | "lightBlue";
 
 const DETAILS_BTN_CLASS =
   "inline-flex items-center justify-center rounded-md px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap shadow-sm transition-colors";
@@ -73,6 +74,8 @@ function badgeClass(kind: BadgeKind) {
       return "bg-fuchsia-100 text-fuchsia-900";
     case "lime":
       return "bg-lime-100 text-lime-900";
+    case "lightBlue":
+      return "bg-blue-50 text-blue-800 border border-blue-200";
     default:
       return "bg-gray-100 text-gray-800";
   }
@@ -321,8 +324,9 @@ export default function DossiersList() {
   const [orangePpdOptions, setOrangePpdOptions] = useState<string[]>([]);
   const [selectedOrangePpd, setSelectedOrangePpd] = useState<string>("");
   const [onlyOrangeMismatch, setOnlyOrangeMismatch] = useState(false);
-  const [orangeStatusFilter, setOrangeStatusFilter] = useState<"ALL" | "OK" | "A_VERIFIER">("ALL");
+  const [orangeStatus, setOrangeStatus] = useState<"ALL" | "OK" | "A_VERIFIER">("ALL");
   const [loadingOrange, setLoadingOrange] = useState(false);
+  const [exportingOrange, setExportingOrange] = useState(false);
 
   // pagination orange
   const [orangePage, setOrangePage] = useState(1);
@@ -391,6 +395,7 @@ export default function DossiersList() {
         setOrangePpdOptions(ppds);
         setOrangeSummary(summary);
         setOrangePage(1);
+        setOrangeStatus("ALL");
 
         if (!selectedOrangeImportId && imports.length > 0) {
           setSelectedOrangeImportId(imports[0].import_id);
@@ -403,6 +408,55 @@ export default function DossiersList() {
     },
     [selectedOrangeImportId, selectedOrangePpd, onlyOrangeMismatch]
   );
+
+  // --------- EXPORT ORANGE EXCEL ----------
+  const exportOrangeExcel = useCallback(async () => {
+    if (!orangeRowsFiltered.length) return;
+    
+    setExportingOrange(true);
+    try {
+      const dataToExport = orangeRowsFiltered.map(r => ({
+        'Num OT': r.num_ot,
+        'Orange HT': r.facturation_orange_ht,
+        'Kyntus HT': r.facturation_kyntus_ht,
+        'Diff HT': r.diff_ht,
+        'Orange TTC': r.facturation_orange_ttc,
+        'Kyntus TTC': r.facturation_kyntus_ttc,
+        'Diff TTC': r.diff_ttc,
+        'Vérification': r.a_verifier ? 'A vérifier' : 'OK',
+        'Statut': r.a_verifier ? 'A_VERIFIER' : 'OK'
+      }));
+
+      const XLSX = await import('xlsx');
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(dataToExport);
+      
+      const wscols = [
+        { wch: 15 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 15 },
+        { wch: 15 },
+      ];
+      ws['!cols'] = wscols;
+      
+      const importInfo = selectedOrangeImportId 
+        ? orangeImports.find(i => i.import_id === selectedOrangeImportId) 
+        : null;
+      const fileName = `comparaison_orange_${importInfo?.filename ?? 'export'}_${new Date().toISOString().slice(0,10)}.xlsx`;
+      
+      XLSX.utils.book_append_sheet(wb, ws, 'Comparaison Orange');
+      XLSX.writeFile(wb, fileName);
+    } catch (e: any) {
+      setError(e?.message || "Erreur lors de l'export Excel Orange");
+    } finally {
+      setExportingOrange(false);
+    }
+  }, [orangeRowsFiltered, selectedOrangeImportId, orangeImports]);
 
   // escape drawer
   useEffect(() => {
@@ -458,6 +512,32 @@ export default function DossiersList() {
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [items]);
 
+  // --- Orange filtered + paginated + TRIÉ PAR OK EN PREMIER ---
+  const orangeRowsFiltered = useMemo(() => {
+    let rows = orangeRows;
+
+    if (orangeStatus === "OK") {
+      rows = rows.filter((r) => !r.a_verifier);
+    }
+    if (orangeStatus === "A_VERIFIER") {
+      rows = rows.filter((r) => !!r.a_verifier);
+    }
+
+    return [...rows].sort((a, b) => {
+      return (a.a_verifier ? 1 : 0) - (b.a_verifier ? 1 : 0);
+    });
+  }, [orangeRows, orangeStatus]);
+
+  const orangePageCount = useMemo(
+    () => Math.max(1, Math.ceil(orangeRowsFiltered.length / PAGE_SIZE)),
+    [orangeRowsFiltered.length]
+  );
+
+  const orangeRowsPage = useMemo(() => {
+    const start = (orangePage - 1) * PAGE_SIZE;
+    return orangeRowsFiltered.slice(start, start + PAGE_SIZE);
+  }, [orangeRowsFiltered, orangePage]);
+
   async function exportExcel() {
     setIsExporting(true);
     try {
@@ -493,25 +573,10 @@ export default function DossiersList() {
     return parsePidiBrutCodes(selected.liste_articles);
   }, [selected]);
 
-  // --- Orange filtered + paginated ---
-  const orangeRowsFiltered = useMemo(() => {
-    let rows = orangeRows;
-
-    if (orangeStatusFilter === "OK") rows = rows.filter((r) => !r.a_verifier);
-    if (orangeStatusFilter === "A_VERIFIER") rows = rows.filter((r) => !!r.a_verifier);
-
-    return rows;
-  }, [orangeRows, orangeStatusFilter]);
-
-  const orangePageCount = useMemo(() => Math.max(1, Math.ceil(orangeRowsFiltered.length / PAGE_SIZE)), [orangeRowsFiltered.length]);
-
-  const orangeRowsPage = useMemo(() => {
-    const start = (orangePage - 1) * PAGE_SIZE;
-    return orangeRowsFiltered.slice(start, start + PAGE_SIZE);
-  }, [orangeRowsFiltered, orangePage]);
-
-  // --- Dossiers paginated (non grouped only) ---
-  const dossiersPageCount = useMemo(() => Math.max(1, Math.ceil(items.length / PAGE_SIZE)), [items.length]);
+  const dossiersPageCount = useMemo(
+    () => Math.max(1, Math.ceil(items.length / PAGE_SIZE)),
+    [items.length]
+  );
 
   const dossiersPageItems = useMemo(() => {
     const start = (dossiersPage - 1) * PAGE_SIZE;
@@ -545,7 +610,6 @@ export default function DossiersList() {
         <div className="text-sm text-gray-600">{loading ? "Chargement…" : `${items.length} dossiers`}</div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {/* toggle sections */}
           <label className="inline-flex items-center gap-2 text-sm border rounded px-3 py-2 bg-white">
             <input type="checkbox" checked={showDossiersSection} onChange={(e) => setShowDossiersSection(e.target.checked)} />
             Afficher Dossiers
@@ -668,14 +732,26 @@ export default function DossiersList() {
               </div>
             </div>
 
-            <button
-              onClick={() => loadOrangeComparison()}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50"
-              disabled={loadingOrange}
-            >
-              <RefreshCw className="h-4 w-4" />
-              {loadingOrange ? "Chargement..." : "Actualiser Orange"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={exportOrangeExcel}
+                disabled={exportingOrange || orangeRowsFiltered.length === 0}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60 text-sm"
+                title="Exporter la comparaison Orange en Excel"
+              >
+                <Download className="h-4 w-4" />
+                {exportingOrange ? "Export..." : "Exporter Orange"}
+              </button>
+
+              <button
+                onClick={() => loadOrangeComparison()}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50"
+                disabled={loadingOrange}
+              >
+                <RefreshCw className="h-4 w-4" />
+                {loadingOrange ? "Chargement..." : "Actualiser Orange"}
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -716,9 +792,9 @@ export default function DossiersList() {
 
             <select
               className="border rounded px-2 py-2 text-sm"
-              value={orangeStatusFilter}
+              value={orangeStatus}
               onChange={(e) => {
-                setOrangeStatusFilter(e.target.value as any);
+                setOrangeStatus(e.target.value as "ALL" | "OK" | "A_VERIFIER");
                 setOrangePage(1);
               }}
               title="Filtrer l'affichage du tableau"
@@ -740,42 +816,69 @@ export default function DossiersList() {
             >
               Lancer la comparaison
             </button>
+          </div>
 
-            {/* Totaux */}
-            {orangeSummary && (
-              <div className="grid grid-cols-2 md:grid-cols-6 gap-2 w-full md:w-auto">
-                <div className="border rounded p-2 text-xs">
-                  <div className="text-gray-500">Orange Total HT</div>
-                  <div className="font-semibold">{fmtNum(orangeSummary.orange_total_ht)}</div>
-                </div>
-                <div className="border rounded p-2 text-xs">
-                  <div className="text-gray-500">Orange Total TTC</div>
-                  <div className="font-semibold">{fmtNum(orangeSummary.orange_total_ttc)}</div>
-                </div>
-                <div className="border rounded p-2 text-xs">
-                  <div className="text-gray-500">Kyntus Total HT</div>
-                  <div className="font-semibold">{fmtNum(orangeSummary.kyntus_total_ht)}</div>
-                </div>
-                <div className="border rounded p-2 text-xs">
-                  <div className="text-gray-500">Kyntus Total TTC</div>
-                  <div className="font-semibold">{fmtNum(orangeSummary.kyntus_total_ttc)}</div>
-                </div>
-                <div className="border rounded p-2 text-xs col-span-1 md:col-span-2">
-                  <div className="text-gray-500">Écart HT (Orange - Kyntus)</div>
-                  <div className="font-semibold">{fmtNum(orangeSummary.ecart_ht)}</div>
-                </div>
-                <div className="border rounded p-2 text-xs col-span-1 md:col-span-2">
-                  <div className="text-gray-500">Écart TTC (Orange - Kyntus)</div>
-                  <div className="font-semibold">{fmtNum(orangeSummary.ecart_ttc)}</div>
-                </div>
+          {/* TOTAUX - alignés sur UNE SEULE LIGNE avec couleurs Orange/Kyntus */}
+          {orangeSummary && (
+            <div className="flex flex-wrap items-center gap-4 w-full mt-2 bg-gray-50 p-4 rounded-lg border">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-gray-600">Orange Total HT</span>
+                <span className="inline-flex items-center px-3 py-1.5 rounded-md text-sm font-mono font-semibold bg-orange-100 text-orange-900 border border-orange-300">
+                  {fmtNum(orangeSummary.orange_total_ht)} €
+                </span>
               </div>
-            )}
+              
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-gray-600">Orange Total TTC</span>
+                <span className="inline-flex items-center px-3 py-1.5 rounded-md text-sm font-mono font-semibold bg-orange-100 text-orange-900 border border-orange-300">
+                  {fmtNum(orangeSummary.orange_total_ttc)} €
+                </span>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-gray-600">Kyntus Total HT</span>
+                <span className="inline-flex items-center px-3 py-1.5 rounded-md text-sm font-mono font-semibold bg-blue-50 text-blue-800 border border-blue-300">
+                  {fmtNum(orangeSummary.kyntus_total_ht)} €
+                </span>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-gray-600">Kyntus Total TTC</span>
+                <span className="inline-flex items-center px-3 py-1.5 rounded-md text-sm font-mono font-semibold bg-blue-50 text-blue-800 border border-blue-300">
+                  {fmtNum(orangeSummary.kyntus_total_ttc)} €
+                </span>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-gray-600">Écart HT</span>
+                <span className={`inline-flex items-center px-3 py-1.5 rounded-md text-sm font-mono font-semibold ${
+                  Math.abs(orangeSummary.ecart_ht) < 0.01 
+                    ? 'bg-green-100 text-green-800 border border-green-300' 
+                    : 'bg-red-100 text-red-800 border border-red-300'
+                }`}>
+                  {fmtNum(orangeSummary.ecart_ht)} €
+                </span>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-gray-600">Écart TTC</span>
+                <span className={`inline-flex items-center px-3 py-1.5 rounded-md text-sm font-mono font-semibold ${
+                  Math.abs(orangeSummary.ecart_ttc) < 0.01 
+                    ? 'bg-green-100 text-green-800 border border-green-300' 
+                    : 'bg-red-100 text-red-800 border border-red-300'
+                }`}>
+                  {fmtNum(orangeSummary.ecart_ttc)} €
+                </span>
+              </div>
+            </div>
+          )}
 
+          <div className="flex items-center justify-between w-full mt-1">
             <div className="text-xs text-gray-600">
-              {orangeRowsFiltered.length} ligne(s) filtrées • Total brut: {orangeRows.length} • Import:{" "}
+              {orangeRowsFiltered.length} ligne(s) • OK: {orangeRowsFiltered.filter(r => !r.a_verifier).length} • À vérifier: {orangeRowsFiltered.filter(r => r.a_verifier).length} • Import:{" "}
               {selectedOrangeImportId || "dernier"}
             </div>
-
+            
             <Pagination
               page={orangePage}
               pageCount={orangePageCount}
@@ -785,48 +888,123 @@ export default function DossiersList() {
             />
           </div>
 
-          {/* Table Orange paginée */}
+          {/* Table Orange paginée - LIGNES ENTIÈRES COLORÉES VERT/ROUGE */}
           {orangeRowsFiltered.length > 0 && (
-            <div className="overflow-x-auto border rounded">
-              <table className="min-w-[1400px] w-full text-sm">
-               <thead className="bg-gray-50">
-  <tr className="text-left">
-    <th className="p-2">Num OT</th>
-    <th className="p-2">Orange HT</th>
-    <th className="p-2">Kyntus HT</th>
-    <th className="p-2">Diff HT</th>
-    <th className="p-2">Orange TTC</th>
-    <th className="p-2">Kyntus TTC</th>
-    <th className="p-2">Diff TTC</th>
-    <th className="p-2">Vérification</th>
-  </tr>
-</thead>
+            <div className="overflow-x-auto border rounded mt-4">
+              <table className="min-w-[1600px] w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr className="text-left">
+                    <th className="p-3 text-sm font-semibold">Num OT</th>
+                    <th className="p-3 text-sm font-semibold">Orange HT</th>
+                    <th className="p-3 text-sm font-semibold">Kyntus HT</th>
+                    <th className="p-3 text-sm font-semibold">Diff HT</th>
+                    <th className="p-3 text-sm font-semibold">Orange TTC</th>
+                    <th className="p-3 text-sm font-semibold">Kyntus TTC</th>
+                    <th className="p-3 text-sm font-semibold">Diff TTC</th>
+                    <th className="p-3 text-sm font-semibold">Vérification</th>
+                  </tr>
+                </thead>
 
-<tbody>
-  {orangeRowsPage.map((r) => (
-    <tr key={r.num_ot} className="border-t">
-      <td className="p-2 font-mono">{r.num_ot}</td>
-
-      <td className="p-2">{fmtNum(r.facturation_orange_ht)}</td>
-      <td className="p-2">{fmtNum(r.facturation_kyntus_ht)}</td>
-      <td className="p-2">{fmtNum(r.diff_ht)}</td>
-
-      <td className="p-2">{fmtNum(r.facturation_orange_ttc)}</td>
-      <td className="p-2">{fmtNum(r.facturation_kyntus_ttc)}</td>
-      <td className="p-2">{fmtNum(r.diff_ttc)}</td>
-
-      <td className="p-2">
-        {r.a_verifier ? <Badge txt="A vérifier" kind="orange" /> : <Badge txt="OK" kind="green" />}
-      </td>
-    </tr>
-  ))}
-</tbody>
+                <tbody>
+                  {orangeRowsPage.map((r) => {
+                    const isOk = !r.a_verifier;
+                    const htEqual = r.diff_ht !== null && r.diff_ht !== undefined && Math.abs(r.diff_ht) < 0.01;
+                    const ttcEqual = r.diff_ttc !== null && r.diff_ttc !== undefined && Math.abs(r.diff_ttc) < 0.01;
+                    
+                    return (
+                      <tr 
+                        key={r.num_ot} 
+                        className={`border-t transition-colors ${
+                          isOk 
+                            ? 'bg-green-50/30 hover:bg-green-100/50' 
+                            : 'bg-red-50/30 hover:bg-red-100/50'
+                        }`}
+                      >
+                        <td className={`p-3 font-mono font-medium ${
+                          isOk ? 'text-green-900' : 'text-red-900'
+                        }`}>
+                          {r.num_ot}
+                        </td>
+                        
+                        <td className="p-3">
+                          <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
+                            isOk 
+                              ? 'bg-green-100 text-green-800 border border-green-300' 
+                              : 'bg-red-100 text-red-800 border border-red-300'
+                          }`}>
+                            {fmtNum(r.facturation_orange_ht)} €
+                          </span>
+                        </td>
+                        
+                        <td className="p-3">
+                          <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
+                            isOk 
+                              ? 'bg-green-100 text-green-800 border border-green-300' 
+                              : 'bg-red-100 text-red-800 border border-red-300'
+                          }`}>
+                            {fmtNum(r.facturation_kyntus_ht)} €
+                          </span>
+                        </td>
+                        
+                        <td className="p-3">
+                          <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
+                            isOk 
+                              ? 'bg-green-100 text-green-800 border border-green-300' 
+                              : 'bg-red-100 text-red-800 border border-red-300'
+                          }`}>
+                            {fmtNum(r.diff_ht)} €
+                          </span>
+                        </td>
+                        
+                        <td className="p-3">
+                          <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
+                            isOk 
+                              ? 'bg-green-100 text-green-800 border border-green-300' 
+                              : 'bg-red-100 text-red-800 border border-red-300'
+                          }`}>
+                            {fmtNum(r.facturation_orange_ttc)} €
+                          </span>
+                        </td>
+                        
+                        <td className="p-3">
+                          <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
+                            isOk 
+                              ? 'bg-green-100 text-green-800 border border-green-300' 
+                              : 'bg-red-100 text-red-800 border border-red-300'
+                          }`}>
+                            {fmtNum(r.facturation_kyntus_ttc)} €
+                          </span>
+                        </td>
+                        
+                        <td className="p-3">
+                          <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
+                            isOk 
+                              ? 'bg-green-100 text-green-800 border border-green-300' 
+                              : 'bg-red-100 text-red-800 border border-red-300'
+                          }`}>
+                            {fmtNum(r.diff_ttc)} €
+                          </span>
+                        </td>
+                        
+                        <td className="p-3">
+                          <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-semibold ${
+                            isOk 
+                              ? 'bg-green-100 text-green-800 border border-green-300' 
+                              : 'bg-red-100 text-red-800 border border-red-300'
+                          }`}>
+                            {isOk ? '✓ OK' : '⚠ A vérifier'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
               </table>
             </div>
           )}
 
           {orangeRowsFiltered.length === 0 && (
-            <div className="text-sm text-gray-500">Aucune ligne à afficher (selon les filtres).</div>
+            <div className="text-sm text-gray-500 py-4 text-center">Aucune ligne à afficher (selon les filtres).</div>
           )}
         </div>
       )}
@@ -897,28 +1075,23 @@ export default function DossiersList() {
                       <td className="p-3">{d.activite_code ?? "—"}</td>
                       <td className="p-3">{d.produit_code ?? "—"}</td>
                       <td className="p-3">{d.code_cible ?? "—"}</td>
-
                       <td className="p-3">
                         {d.code_cloture_code ? <Badge txt={d.code_cloture_code} kind={clotureKind(d.code_cloture_code)} /> : "—"}
                       </td>
-
                       <td className="p-3">
                         {d.mode_passage ? <Badge txt={terrainLabel} kind={terrainKind(d.mode_passage)} /> : <span className="text-gray-500">—</span>}
                       </td>
-
                       <td className="p-3">
                         <div className="max-w-[520px] truncate" title={d.libelle_regle ?? ""}>
                           {d.libelle_regle ?? "—"}
                         </div>
                       </td>
-
                       <td className="p-3">
                         <div className="flex flex-col gap-1">
                           <div className="flex items-center gap-2">
                             <Badge txt={sf.replaceAll("_", " ")} kind={statutFinalKind(sf)} />
                             {d.is_previsite ? <Badge txt="Prévisite" kind="slate" /> : null}
                           </div>
-
                           {sf === "A_VERIFIER" && d.motif_verification ? (
                             <div className="flex items-center gap-2">
                               <Badge txt={motifLabel(d.motif_verification)} kind={motifKind(d.motif_verification)} />
@@ -926,11 +1099,9 @@ export default function DossiersList() {
                           ) : null}
                         </div>
                       </td>
-
                       <td className="p-3">
                         <Badge txt={cro.replaceAll("_", " ")} kind={croisementKind(cro)} />
                       </td>
-
                       <td className="p-3">
                         {d.statut_praxedo ? (
                           <Badge txt={praxedoLabel(d)} kind={d.statut_praxedo.toLowerCase().includes("valid") ? "green" : "gray"} />
@@ -938,11 +1109,9 @@ export default function DossiersList() {
                           "—"
                         )}
                       </td>
-
                       <td className="p-3">
                         <span className="text-purple-700 font-medium">{pidiLabel(d)}</span>
                       </td>
-
                       <td className="p-3">
                         <button
                           onClick={(e) => {
@@ -956,9 +1125,7 @@ export default function DossiersList() {
                           Détails
                         </button>
                       </td>
-
                       <td className="p-3">{formatFrDate(d.date_planifiee)}</td>
-
                       <td className="p-3">
                         <ChevronRight className="h-4 w-4 text-gray-400" />
                       </td>
@@ -987,7 +1154,11 @@ export default function DossiersList() {
                               const terrainLabel = d.mode_passage ? d.mode_passage : "—";
 
                               return (
-                                <tr key={d.key_match} className="border-b hover:bg-gray-50/50 cursor-pointer" onClick={() => openDrawer(d)}>
+                                <tr
+                                  key={d.key_match}
+                                  className="border-b hover:bg-gray-50/50 cursor-pointer"
+                                  onClick={() => openDrawer(d)}
+                                >
                                   <td className="p-3 font-mono w-[160px]">{d.ot_key ?? "—"}</td>
                                   <td className="p-3 font-mono w-[160px]">{d.nd_global ?? "—"}</td>
                                   <td className="p-3 font-mono w-[160px]">{d.numero_ppd ?? "—"}</td>
@@ -995,21 +1166,17 @@ export default function DossiersList() {
                                   <td className="p-3 w-[80px]">{d.activite_code ?? "—"}</td>
                                   <td className="p-3 w-[80px]">{d.produit_code ?? "—"}</td>
                                   <td className="p-3 w-[120px]">{d.code_cible ?? "—"}</td>
-
                                   <td className="p-3 w-[110px]">
                                     {d.code_cloture_code ? <Badge txt={d.code_cloture_code} kind={clotureKind(d.code_cloture_code)} /> : "—"}
                                   </td>
-
                                   <td className="p-3 w-[120px]">
                                     {d.mode_passage ? <Badge txt={terrainLabel} kind={terrainKind(d.mode_passage)} /> : <span className="text-gray-500">—</span>}
                                   </td>
-
                                   <td className="p-3 w-[520px]">
                                     <div className="max-w-[520px] truncate" title={d.libelle_regle ?? ""}>
                                       {d.libelle_regle ?? "—"}
                                     </div>
                                   </td>
-
                                   <td className="p-3 w-[220px]">
                                     <div className="flex flex-col gap-1">
                                       <div className="flex items-center gap-2">
@@ -1021,11 +1188,9 @@ export default function DossiersList() {
                                       ) : null}
                                     </div>
                                   </td>
-
                                   <td className="p-3 w-[140px]">
                                     <Badge txt={cro.replaceAll("_", " ")} kind={croisementKind(cro)} />
                                   </td>
-
                                   <td className="p-3 w-[140px]">
                                     {d.statut_praxedo ? (
                                       <Badge txt={praxedoLabel(d)} kind={d.statut_praxedo.toLowerCase().includes("valid") ? "green" : "gray"} />
@@ -1033,11 +1198,9 @@ export default function DossiersList() {
                                       "—"
                                     )}
                                   </td>
-
                                   <td className="p-3 w-[160px]">
                                     <span className="text-purple-700 font-medium">{pidiLabel(d)}</span>
                                   </td>
-
                                   <td className="p-3">
                                     <button
                                       onClick={(e) => {
@@ -1050,7 +1213,6 @@ export default function DossiersList() {
                                       Détails
                                     </button>
                                   </td>
-
                                   <td className="p-3 w-[170px]">{formatFrDate(d.date_planifiee)}</td>
                                   <td className="p-3 w-[40px]">
                                     <ChevronRight className="h-4 w-4 text-gray-400" />
@@ -1257,17 +1419,13 @@ export default function DossiersList() {
             const t = importType;
             setImportType(null);
 
-            // on recharge les dossiers, mais on n'affiche pas automatiquement Orange
             load(filters);
 
-            // si import Orange, on met à jour l'importId sélectionné, mais on laisse l'utilisateur lancer la comparaison
             if (payload?.importId && t === "ORANGE_PPD") {
               setSelectedOrangeImportId(payload.importId);
               setSelectedOrangePpd("");
-              // On refresh juste la liste des imports/options pour que l’import apparaisse dans le dropdown
               listOrangeImports(30).then(setOrangeImports).catch(() => {});
               listOrangePpdOptions(payload.importId).then(setOrangePpdOptions).catch(() => {});
-              // pas de loadOrangeComparison ici (conformément à ton besoin)
             }
           }}
           onClose={() => setImportType(null)}

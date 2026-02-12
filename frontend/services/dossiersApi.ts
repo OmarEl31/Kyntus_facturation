@@ -143,10 +143,6 @@ export async function exportDossiersXlsx(filters: DossiersFilters = {}): Promise
   window.URL.revokeObjectURL(downloadUrl);
 }
 
-/* -------------------------
-   IMPORT CSV
--------------------------- */
-
 export interface ImportCsvOptions {
   type: "PRAXEDO" | "PIDI" | "ORANGE_PPD";
   file: File;
@@ -159,7 +155,6 @@ export interface ImportCsvResult {
   count: number;
   rows?: number;
   import_id?: string;
-  importId?: string; // tolérance (front)
 }
 
 export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvResult> {
@@ -190,10 +185,6 @@ export const uploadPraxedo = (file: File) => importCsv({ type: "PRAXEDO", file }
 export const uploadPidi = (file: File) => importCsv({ type: "PIDI", file });
 export const uploadOrangePpd = (file: File) => importCsv({ type: "ORANGE_PPD", file });
 
-/* -------------------------
-   ORANGE PPD
--------------------------- */
-
 export interface OrangePpdImportSummary {
   import_id: string;
   filename?: string | null;
@@ -215,33 +206,26 @@ export type OrangePpdComparison = {
   import_id: string;
   num_ot: string;
 
-  // Montants
-  facturation_orange_ht?: number | null;
-  facturation_orange_ttc?: number | null;
-  facturation_kyntus_ht?: number | null;
-  facturation_kyntus_ttc?: number | null;
+  numero_ppd_orange: string | null;
 
-  diff_ht?: number | null;
-  diff_ttc?: number | null;
+  facturation_orange_ht: number | null;
+  facturation_orange_ttc: number | null;
+  facturation_kyntus_ht: number | null;
+  facturation_kyntus_ttc: number | null;
+
+  diff_ht: number | null;
+  diff_ttc: number | null;
 
   a_verifier: boolean;
 };
 
-export async function compareOrangePpdSummary(params: { importId?: string }) {
-  const qs = new URLSearchParams();
-  if (params.importId) qs.set("import_id", params.importId);
 
-  const res = await fetch(`${API_URL}/api/orange-ppd/compare-summary${qs.toString() ? `?${qs}` : ""}`);
-  if (!res.ok) throw new Error(await res.text());
-  return (await res.json()) as OrangePpdCompareSummary;
-}
 
 export async function listOrangeImports(limit = 20): Promise<OrangePpdImportSummary[]> {
   const response = await fetch(`${API_URL}/api/orange-ppd/imports?limit=${limit}`);
   if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
   return response.json();
 }
-
 
 export async function listOrangePpdOptions(importId?: string): Promise<string[]> {
   const qs = new URLSearchParams();
@@ -251,13 +235,27 @@ export async function listOrangePpdOptions(importId?: string): Promise<string[]>
   if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
   return response.json();
 }
-
-export async function compareOrangePpd(params: { importId?: string; onlyMismatch?: boolean } = {}): Promise<OrangePpdComparison[]> {
+export async function compareOrangePpd(params: {
+  importId?: string;
+  ppd?: string;
+  onlyMismatch?: boolean;
+} = {}): Promise<OrangePpdComparison[]> {
   const qs = new URLSearchParams();
   if (params.importId) qs.set("import_id", params.importId);
+  if (params.ppd?.trim()) qs.set("ppd", params.ppd.trim());
   if (params.onlyMismatch) qs.set("only_mismatch", "true");
 
   const response = await fetch(`${API_URL}/api/orange-ppd/compare${qs.toString() ? `?${qs}` : ""}`);
   if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
   return response.json();
+}
+
+export async function compareOrangePpdSummary(params: { importId?: string; ppd?: string } = {}): Promise<OrangePpdCompareSummary> {
+  const qs = new URLSearchParams();
+  if (params.importId) qs.set("import_id", params.importId);
+  if (params.ppd?.trim()) qs.set("ppd", params.ppd.trim());
+
+  const res = await fetch(`${API_URL}/api/orange-ppd/compare-summary${qs.toString() ? `?${qs}` : ""}`);
+  if (!res.ok) throw new Error(`Erreur ${res.status}: ${await res.text()}`);
+  return res.json();
 }
