@@ -138,4 +138,4 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.26.0.0/16  # Subnet différent pour éviter les conflits
+        - subnet: 172.26.0.0/16  # Subnet différent pour éviter les conflits! 
