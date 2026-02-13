@@ -316,7 +316,13 @@ def compare_orange_ppd(
       facturation_kyntus_ttc,
       diff_ht,
       diff_ttc,
-      a_verifier
+      a_verifier,
+
+      ot_existant,
+      statut_croisement,
+      croisement_complet,
+      reason
+
     FROM canonique.v_orange_ppd_compare
     WHERE (:import_id IS NULL OR import_id = :import_id)
       AND (:ppd IS NULL OR numero_ppd_orange = :ppd)
@@ -329,6 +335,7 @@ def compare_orange_ppd(
     ).mappings().all()
 
     return [dict(r) for r in rows]
+
 
 
 @router.get("/compare-summary")

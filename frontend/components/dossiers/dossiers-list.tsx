@@ -292,6 +292,47 @@ function Pagination({
   );
 }
 
+// Helpers pour la comparaison Orange
+function reasonLabel(r: string) {
+  switch ((r || "").toUpperCase()) {
+    case "OT_INEXISTANT":
+      return "OT inexistant";
+    case "CROISEMENT_INCOMPLET":
+      return "Croisement incomplet";
+    case "COMPARAISON_INCOHERENTE":
+      return "Comparaison incohérente";
+    case "OK":
+      return "OK";
+    default:
+      return r || "—";
+  }
+}
+
+function orangeRowClass(r: OrangePpdComparison & { reason?: string }) {
+  const reason = (r.reason || "").toUpperCase();
+
+  // Jaune: OT inexistant ou croisement incomplet
+  if (reason === "OT_INEXISTANT" || reason === "CROISEMENT_INCOMPLET") {
+    return "bg-amber-50/40 hover:bg-amber-100/50";
+  }
+
+  // Rouge: croisement complet mais comparaison incohérente
+  if (reason === "COMPARAISON_INCOHERENTE") {
+    return "bg-red-50/40 hover:bg-red-100/50";
+  }
+
+  // Vert: OK
+  return "bg-green-50/30 hover:bg-green-100/50";
+}
+
+function orangeReasonBadgeKind(r: OrangePpdComparison & { reason?: string }): BadgeKind {
+  const reason = (r.reason || "").toUpperCase();
+  if (reason === "OK") return "green";
+  if (reason === "COMPARAISON_INCOHERENTE") return "red";
+  if (reason === "OT_INEXISTANT" || reason === "CROISEMENT_INCOMPLET") return "yellow";
+  return "gray";
+}
+
 export default function DossiersList() {
   // --- affichage des sections (choix utilisateur) ---
   const [showOrangeSection, setShowOrangeSection] = useState(false);
@@ -324,7 +365,12 @@ export default function DossiersList() {
   const [orangePpdOptions, setOrangePpdOptions] = useState<string[]>([]);
   const [selectedOrangePpd, setSelectedOrangePpd] = useState<string>("");
   const [onlyOrangeMismatch, setOnlyOrangeMismatch] = useState(false);
+  
+  // Filtres supplémentaires pour Orange
   const [orangeStatus, setOrangeStatus] = useState<"ALL" | "OK" | "A_VERIFIER">("ALL");
+  const [orangeCroisementFilter, setOrangeCroisementFilter] = useState<string>("ALL");
+  const [orangeOtSearch, setOrangeOtSearch] = useState<string>("");
+  
   const [loadingOrange, setLoadingOrange] = useState(false);
   const [exportingOrange, setExportingOrange] = useState(false);
 
@@ -396,6 +442,8 @@ export default function DossiersList() {
         setOrangeSummary(summary);
         setOrangePage(1);
         setOrangeStatus("ALL");
+        setOrangeCroisementFilter("ALL");
+        setOrangeOtSearch("");
 
         if (!selectedOrangeImportId && imports.length > 0) {
           setSelectedOrangeImportId(imports[0].import_id);
@@ -409,6 +457,68 @@ export default function DossiersList() {
     [selectedOrangeImportId, selectedOrangePpd, onlyOrangeMismatch]
   );
 
+  // --- Obtenir les valeurs uniques pour les filtres ---
+  const uniqueCroisementStatus = useMemo(() => {
+    const statuses = new Set<string>();
+    orangeRows.forEach(row => {
+      if (row.statut_croisement) {
+        statuses.add(row.statut_croisement);
+      }
+    });
+    return Array.from(statuses).sort();
+  }, [orangeRows]);
+
+  // --- Orange filtered + paginated + enrichi avec raison et statuts ---
+  const orangeRowsFiltered = useMemo(() => {
+    console.log("Filtrage - Statut:", orangeStatus, "Croisement:", orangeCroisementFilter, "Recherche OT:", orangeOtSearch);
+    
+    // Enrichir les lignes avec les propriétés calculées
+    const enrichedRows = orangeRows.map(row => ({
+      ...row,
+      ot_existant: row.facturation_kyntus_ht !== null && row.facturation_kyntus_ht !== undefined,
+      croisement_complet: row.statut_croisement === "OK",
+      reason: (() => {
+        if (!row.ot_existant) return "OT_INEXISTANT";
+        if (row.statut_croisement !== "OK") return "CROISEMENT_INCOMPLET";
+        if (row.diff_ht !== null && Math.abs(row.diff_ht) >= 0.01) return "COMPARAISON_INCOHERENTE";
+        if (row.diff_ttc !== null && Math.abs(row.diff_ttc) >= 0.01) return "COMPARAISON_INCOHERENTE";
+        return "OK";
+      })()
+    }));
+
+    let rows = enrichedRows;
+
+    // Filtre par statut (OK/A vérifier) - basé sur reason
+    if (orangeStatus === "OK") {
+      rows = rows.filter((r) => r.reason === "OK");
+    }
+    if (orangeStatus === "A_VERIFIER") {
+      rows = rows.filter((r) => r.reason !== "OK");
+    }
+
+    // Filtre par statut de croisement
+    if (orangeCroisementFilter !== "ALL") {
+      rows = rows.filter((r) => r.statut_croisement === orangeCroisementFilter);
+    }
+
+    // Filtre par recherche OT (recherche textuelle)
+    if (orangeOtSearch.trim() !== "") {
+      const searchTerm = orangeOtSearch.trim().toLowerCase();
+      rows = rows.filter((r) => 
+        r.num_ot.toLowerCase().includes(searchTerm)
+      );
+    }
+
+    console.log("Résultat filtrage:", rows.length, "lignes");
+    
+    return [...rows].sort((a, b) => {
+      // Trier par raison (OK en premier)
+      if (a.reason === "OK" && b.reason !== "OK") return -1;
+      if (a.reason !== "OK" && b.reason === "OK") return 1;
+      return 0;
+    });
+  }, [orangeRows, orangeStatus, orangeCroisementFilter, orangeOtSearch]);
+
   // --------- EXPORT ORANGE EXCEL ----------
   const exportOrangeExcel = useCallback(async () => {
     if (!orangeRowsFiltered.length) return;
@@ -417,14 +527,16 @@ export default function DossiersList() {
     try {
       const dataToExport = orangeRowsFiltered.map(r => ({
         'Num OT': r.num_ot,
+        'OT Existant': r.ot_existant ? 'Oui' : 'Non',
+        'Statut Croisement': r.statut_croisement ?? '—',
+        'Raison': reasonLabel(r.reason),
         'Orange HT': r.facturation_orange_ht,
         'Kyntus HT': r.facturation_kyntus_ht,
         'Diff HT': r.diff_ht,
         'Orange TTC': r.facturation_orange_ttc,
         'Kyntus TTC': r.facturation_kyntus_ttc,
         'Diff TTC': r.diff_ttc,
-        'Vérification': r.a_verifier ? 'A vérifier' : 'OK',
-        'Statut': r.a_verifier ? 'A_VERIFIER' : 'OK'
+        'Vérification': r.reason === "OK" ? 'OK' : 'A vérifier'
       }));
 
       const XLSX = await import('xlsx');
@@ -434,12 +546,14 @@ export default function DossiersList() {
       const wscols = [
         { wch: 15 },
         { wch: 12 },
+        { wch: 18 },
+        { wch: 25 },
         { wch: 12 },
         { wch: 12 },
         { wch: 12 },
         { wch: 12 },
         { wch: 12 },
-        { wch: 15 },
+        { wch: 12 },
         { wch: 15 },
       ];
       ws['!cols'] = wscols;
@@ -511,22 +625,6 @@ export default function DossiersList() {
     }
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [items]);
-
-  // --- Orange filtered + paginated + TRIÉ PAR OK EN PREMIER ---
-  const orangeRowsFiltered = useMemo(() => {
-    let rows = orangeRows;
-
-    if (orangeStatus === "OK") {
-      rows = rows.filter((r) => !r.a_verifier);
-    }
-    if (orangeStatus === "A_VERIFIER") {
-      rows = rows.filter((r) => !!r.a_verifier);
-    }
-
-    return [...rows].sort((a, b) => {
-      return (a.a_verifier ? 1 : 0) - (b.a_verifier ? 1 : 0);
-    });
-  }, [orangeRows, orangeStatus]);
 
   const orangePageCount = useMemo(
     () => Math.max(1, Math.ceil(orangeRowsFiltered.length / PAGE_SIZE)),
@@ -790,20 +888,6 @@ export default function DossiersList() {
               API: uniquement à vérifier
             </label>
 
-            <select
-              className="border rounded px-2 py-2 text-sm"
-              value={orangeStatus}
-              onChange={(e) => {
-                setOrangeStatus(e.target.value as "ALL" | "OK" | "A_VERIFIER");
-                setOrangePage(1);
-              }}
-              title="Filtrer l'affichage du tableau"
-            >
-              <option value="ALL">Table: tout</option>
-              <option value="OK">Table: OK</option>
-              <option value="A_VERIFIER">Table: A vérifier</option>
-            </select>
-
             <button
               onClick={() =>
                 loadOrangeComparison({
@@ -816,6 +900,70 @@ export default function DossiersList() {
             >
               Lancer la comparaison
             </button>
+          </div>
+
+          {/* Filtres supplémentaires pour Orange */}
+          <div className="flex flex-wrap items-center gap-3 mt-2 p-3 bg-gray-50 rounded-lg border">
+            <div className="text-xs font-medium text-gray-700 mr-1">Filtres tableau :</div>
+            
+            {/* Filtre par statut (OK/A vérifier) */}
+            <select
+              className="border rounded px-2 py-2 text-sm min-w-[140px]"
+              value={orangeStatus}
+              onChange={(e) => {
+                setOrangeStatus(e.target.value as "ALL" | "OK" | "A_VERIFIER");
+                setOrangePage(1);
+              }}
+              title="Filtrer par statut de vérification"
+            >
+              <option value="ALL">Tous les statuts</option>
+              <option value="OK">OK uniquement</option>
+              <option value="A_VERIFIER">À vérifier uniquement</option>
+            </select>
+
+            {/* Filtre par statut de croisement */}
+            <select
+              className="border rounded px-2 py-2 text-sm min-w-[180px]"
+              value={orangeCroisementFilter}
+              onChange={(e) => {
+                setOrangeCroisementFilter(e.target.value);
+                setOrangePage(1);
+              }}
+              title="Filtrer par statut de croisement"
+            >
+              <option value="ALL">Tous les croisements</option>
+              {uniqueCroisementStatus.map(status => (
+                <option key={status} value={status}>
+                  {status.replaceAll("_", " ")}
+                </option>
+              ))}
+            </select>
+
+            {/* Recherche par numéro OT */}
+            <div className="flex items-center gap-1">
+              <input
+                type="text"
+                placeholder="Rechercher OT..."
+                value={orangeOtSearch}
+                onChange={(e) => {
+                  setOrangeOtSearch(e.target.value);
+                  setOrangePage(1);
+                }}
+                className="border rounded px-3 py-2 text-sm min-w-[200px]"
+              />
+              {orangeOtSearch && (
+                <button
+                  onClick={() => {
+                    setOrangeOtSearch("");
+                    setOrangePage(1);
+                  }}
+                  className="p-2 text-gray-500 hover:text-gray-700"
+                  title="Effacer la recherche"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           </div>
 
           {/* TOTAUX - alignés sur UNE SEULE LIGNE avec couleurs Orange/Kyntus */}
@@ -875,8 +1023,11 @@ export default function DossiersList() {
 
           <div className="flex items-center justify-between w-full mt-1">
             <div className="text-xs text-gray-600">
-              {orangeRowsFiltered.length} ligne(s) • OK: {orangeRowsFiltered.filter(r => !r.a_verifier).length} • À vérifier: {orangeRowsFiltered.filter(r => r.a_verifier).length} • Import:{" "}
+              {orangeRowsFiltered.length} ligne(s) • OK: {orangeRowsFiltered.filter(r => r.reason === "OK").length} • À vérifier: {orangeRowsFiltered.filter(r => r.reason !== "OK").length} • Import:{" "}
               {selectedOrangeImportId || "dernier"}
+              {orangeOtSearch && <span className="ml-2">• Recherche: "{orangeOtSearch}"</span>}
+              {orangeCroisementFilter !== "ALL" && <span className="ml-2">• Croisement: {orangeCroisementFilter.replaceAll("_", " ")}</span>}
+              {orangeStatus !== "ALL" && <span className="ml-2">• Statut: {orangeStatus === "OK" ? "OK" : "À vérifier"}</span>}
             </div>
             
             <Pagination
@@ -888,13 +1039,15 @@ export default function DossiersList() {
             />
           </div>
 
-          {/* Table Orange paginée - LIGNES ENTIÈRES COLORÉES VERT/ROUGE */}
+          {/* Table Orange paginée - avec OT, Croisement, Raison */}
           {orangeRowsFiltered.length > 0 && (
             <div className="overflow-x-auto border rounded mt-4">
-              <table className="min-w-[1600px] w-full text-sm">
+              <table className="min-w-[2000px] w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr className="text-left">
-                    <th className="p-3 text-sm font-semibold">Num OT</th>
+                    <th className="p-3 text-sm font-semibold">OT</th>
+                    <th className="p-3 text-sm font-semibold">Croisement</th>
+                    <th className="p-3 text-sm font-semibold">Raison</th>
                     <th className="p-3 text-sm font-semibold">Orange HT</th>
                     <th className="p-3 text-sm font-semibold">Kyntus HT</th>
                     <th className="p-3 text-sm font-semibold">Diff HT</th>
@@ -907,28 +1060,34 @@ export default function DossiersList() {
 
                 <tbody>
                   {orangeRowsPage.map((r) => {
-                    const isOk = !r.a_verifier;
-                    const htEqual = r.diff_ht !== null && r.diff_ht !== undefined && Math.abs(r.diff_ht) < 0.01;
-                    const ttcEqual = r.diff_ttc !== null && r.diff_ttc !== undefined && Math.abs(r.diff_ttc) < 0.01;
+                    const reason = (r.reason || "").toUpperCase();
                     
                     return (
                       <tr 
                         key={r.num_ot} 
-                        className={`border-t transition-colors ${
-                          isOk 
-                            ? 'bg-green-50/30 hover:bg-green-100/50' 
-                            : 'bg-red-50/30 hover:bg-red-100/50'
-                        }`}
+                        className={`border-t transition-colors ${orangeRowClass(r)}`}
                       >
-                        <td className={`p-3 font-mono font-medium ${
-                          isOk ? 'text-green-900' : 'text-red-900'
-                        }`}>
+                        <td className="p-3 font-mono font-medium">
                           {r.num_ot}
                         </td>
                         
                         <td className="p-3">
+                          <Badge
+                            txt={(r.statut_croisement ?? "—").replaceAll("_", " ")}
+                            kind={r.croisement_complet ? "green" : (r.ot_existant ? "yellow" : "red")}
+                          />
+                        </td>
+                        
+                        <td className="p-3">
+                          <Badge 
+                            txt={reasonLabel(r.reason)} 
+                            kind={orangeReasonBadgeKind(r)} 
+                          />
+                        </td>
+                        
+                        <td className="p-3">
                           <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
-                            isOk 
+                            reason === "OK"
                               ? 'bg-green-100 text-green-800 border border-green-300' 
                               : 'bg-red-100 text-red-800 border border-red-300'
                           }`}>
@@ -938,7 +1097,7 @@ export default function DossiersList() {
                         
                         <td className="p-3">
                           <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
-                            isOk 
+                            reason === "OK"
                               ? 'bg-green-100 text-green-800 border border-green-300' 
                               : 'bg-red-100 text-red-800 border border-red-300'
                           }`}>
@@ -948,7 +1107,7 @@ export default function DossiersList() {
                         
                         <td className="p-3">
                           <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
-                            isOk 
+                            reason === "OK"
                               ? 'bg-green-100 text-green-800 border border-green-300' 
                               : 'bg-red-100 text-red-800 border border-red-300'
                           }`}>
@@ -958,7 +1117,7 @@ export default function DossiersList() {
                         
                         <td className="p-3">
                           <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
-                            isOk 
+                            reason === "OK"
                               ? 'bg-green-100 text-green-800 border border-green-300' 
                               : 'bg-red-100 text-red-800 border border-red-300'
                           }`}>
@@ -968,7 +1127,7 @@ export default function DossiersList() {
                         
                         <td className="p-3">
                           <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
-                            isOk 
+                            reason === "OK"
                               ? 'bg-green-100 text-green-800 border border-green-300' 
                               : 'bg-red-100 text-red-800 border border-red-300'
                           }`}>
@@ -978,7 +1137,7 @@ export default function DossiersList() {
                         
                         <td className="p-3">
                           <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
-                            isOk 
+                            reason === "OK"
                               ? 'bg-green-100 text-green-800 border border-green-300' 
                               : 'bg-red-100 text-red-800 border border-red-300'
                           }`}>
@@ -987,13 +1146,13 @@ export default function DossiersList() {
                         </td>
                         
                         <td className="p-3">
-                          <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-semibold ${
-                            isOk 
-                              ? 'bg-green-100 text-green-800 border border-green-300' 
-                              : 'bg-red-100 text-red-800 border border-red-300'
-                          }`}>
-                            {isOk ? '✓ OK' : '⚠ A vérifier'}
-                          </span>
+                          {(() => {
+                            const reason = (r.reason || "").toUpperCase();
+                            if (reason === "OK") return <Badge txt="✓ OK" kind="green" />;
+                            if (reason === "COMPARAISON_INCOHERENTE") return <Badge txt="⚠ A vérifier" kind="red" />;
+                            if (reason === "OT_INEXISTANT" || reason === "CROISEMENT_INCOMPLET") return <Badge txt="⚠ A vérifier" kind="yellow" />;
+                            return <Badge txt="—" kind="gray" />;
+                          })()}
                         </td>
                       </tr>
                     );
@@ -1004,7 +1163,12 @@ export default function DossiersList() {
           )}
 
           {orangeRowsFiltered.length === 0 && (
-            <div className="text-sm text-gray-500 py-4 text-center">Aucune ligne à afficher (selon les filtres).</div>
+            <div className="text-sm text-gray-500 py-4 text-center">
+              Aucune ligne à afficher (selon les filtres).
+              {orangeOtSearch && <div className="mt-1">Recherche: "{orangeOtSearch}"</div>}
+              {orangeCroisementFilter !== "ALL" && <div className="mt-1">Croisement: {orangeCroisementFilter.replaceAll("_", " ")}</div>}
+              {orangeStatus !== "ALL" && <div className="mt-1">Statut: {orangeStatus === "OK" ? "OK" : "À vérifier"}</div>}
+            </div>
           )}
         </div>
       )}

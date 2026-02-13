@@ -215,8 +215,11 @@ export type OrangePpdComparison = {
 
   diff_ht: number | null;
   diff_ttc: number | null;
-
   a_verifier: boolean;
+  ot_existant: boolean;
+  statut_croisement: "OK" | "ABSENT_PIDI" | "ABSENT_PRAXEDO" | "INCONNU" | string;
+  croisement_complet: boolean;
+  reason: "OT_INEXISTANT" | "CROISEMENT_INCOMPLET" | "COMPARAISON_INCOHERENTE" | "OK" | string;
 };
 
 
