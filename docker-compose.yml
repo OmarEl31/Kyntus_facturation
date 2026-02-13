@@ -7,32 +7,46 @@ services:
   db:
     image: postgres:15
     container_name: kyntus_db_main
+    restart: unless-stopped
     environment:
       POSTGRES_USER: kyntus_user
       POSTGRES_PASSWORD: kyntus_pass
       POSTGRES_DB: Kynt_fac_DB
+      POSTGRES_SHARED_BUFFERS: 256MB
+      POSTGRES_MAX_CONNECTIONS: 100
     ports:
-      - "5432:5432"
+      - "10.10.10.50:5433:5432"  # PORT EXTERNE: 5433 (au lieu de 5432)
     volumes:
       - kyntus_data:/var/lib/postgresql/data
+      - ./backups:/backups
     networks:
       - kyntus_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kyntus_user -d Kynt_fac_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ============================
-  # 🧭 Interface d’administration PGAdmin
+  # 🧭 Interface d'administration PGAdmin
   # ============================
   pgadmin:
     image: dpage/pgadmin4
     container_name: kyntus_pgadmin_
+    restart: unless-stopped
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@kyntus.com
       PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_LISTEN_ADDRESS: 0.0.0.0
+      PGADMIN_LISTEN_PORT: 80
     ports:
-      - "5050:80"
+      - "10.10.10.50:5051:80"  # PORT EXTERNE: 5051 (au lieu de 5050)
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
       - pgadmin_data:/var/lib/pgadmin
+      - ./pgadmin/servers.json:/pgadmin4/servers.json
     networks:
       - kyntus_net
 
@@ -44,18 +58,33 @@ services:
       context: .
       dockerfile: Backend/Dockerfile
     container_name: kyntus_backend
+    restart: unless-stopped
     env_file:
       - ./Backend/.env
+    environment:
+      DATABASE_URL: postgresql://kyntus_user:kyntus_pass@db:5432/Kynt_fac_DB
+      BACKEND_CORS_ORIGINS: '["http://10.10.10.50:3100","http://localhost:3100"]'
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8000
+      ENVIRONMENT: production
     working_dir: /app/Backend
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 #--reload
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
     volumes:
       - ./Backend:/app/Backend
+      - backend_logs:/app/Backend/logs
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     ports:
-      - "8000:8000"
+      - "10.10.10.50:8100:8000"  # PORT EXTERNE: 8100 (au lieu de 8000)
     networks:
       - kyntus_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # ============================
   # 💻 Frontend Next.js (React)
@@ -64,24 +93,42 @@ services:
     build:
       context: ./Frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://10.10.10.50:8100
     container_name: kyntus_frontend
+    restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: http://10.10.10.50:8100
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
     volumes:
       - ./Frontend:/app
+      - /app/node_modules
+      - /app/.next
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
-      - "3000:3000"
+      - "10.10.10.50:3100:3000"  # PORT EXTERNE: 3100 (au lieu de 3000)
     networks:
       - kyntus_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 # ============================
 # 💾 Volumes persistants
 # ============================
 volumes:
   kyntus_data:
+    driver: local
   pgadmin_data:
+    driver: local
+  backend_logs:
+    driver: local
 
 # ============================
 # 🌐 Réseau commun
@@ -89,3 +136,6 @@ volumes:
 networks:
   kyntus_net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.26.0.0/16  # Subnet différent pour éviter les conflits
