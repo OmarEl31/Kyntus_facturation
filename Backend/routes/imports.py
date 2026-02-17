@@ -258,6 +258,9 @@ PIDI_REQUIRED = {
     "Bordereau": {"bordereau"},
     "HT": {"ht", "montant_ht", "prix_majore", "prix_majore_", "prix", "prix_majoré"},
     "Liste des articles": {"liste_des_articles", "liste_articles", "liste_d_articles", "article"},
+    "Num CAC": {"n_cac"},
+    "Comment acqui/rejet": {"comment_acqui_rejet"},
+
 }
 
 # -------------------------------------------------------------------
@@ -499,6 +502,8 @@ async def import_pidi(
             # HT numeric tolérant virgule
             ht_new = _parse_ht(_val(h, "ht", "montant_ht", "prix_majore", "prix", "prix_majoré"))
             rec["ht"] = rec.get("ht") if rec.get("ht") is not None else ht_new
+            rec["n_cac"] = _pick_first(rec.get("n_cac"), _clean_text(_val(h, "n_cac", "numero_cac")))
+            rec["comment_acqui_rejet"] = _pick_first(rec.get("comment_acqui_rejet"), _clean_text(_val(h, "commentaire_acqui_rejet", "commentaire", "commentaire_rejet")))
 
         upserted = 0
         for _, rec in agg.items():

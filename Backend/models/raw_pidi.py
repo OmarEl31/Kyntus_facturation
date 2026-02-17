@@ -5,7 +5,7 @@ class RawPidi(Base):
     __tablename__ = "pidi"
     __table_args__ = {"schema": "raw"}
 
-    # PK stable : si ton fichier a N° de flux PIDI, on l’utilise
+    # PK stable
     numero_flux_pidi = Column(Text, primary_key=True)
 
     contrat = Column(Text)
@@ -27,3 +27,7 @@ class RawPidi(Base):
 
     liste_articles = Column(Text)
     imported_at = Column(TIMESTAMP)
+
+    # ✅ champs nécessaires pour comparaison Excel PPD
+    n_cac = Column(Text, nullable=True)
+    comment_acqui_rejet = Column(Text, nullable=True)

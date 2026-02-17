@@ -1,5 +1,9 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+/* =========================
+   DOSSIERS
+========================= */
+
 export interface DossiersFilters {
   statut_final?: string;
   statut_croisement?: string;
@@ -143,6 +147,10 @@ export async function exportDossiersXlsx(filters: DossiersFilters = {}): Promise
   window.URL.revokeObjectURL(downloadUrl);
 }
 
+/* =========================
+   IMPORTS (CSV)
+========================= */
+
 export interface ImportCsvOptions {
   type: "PRAXEDO" | "PIDI" | "ORANGE_PPD";
   file: File;
@@ -155,6 +163,7 @@ export interface ImportCsvResult {
   count: number;
   rows?: number;
   import_id?: string;
+  importId?: string;
 }
 
 export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvResult> {
@@ -169,7 +178,7 @@ export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvRes
       ? `${API_URL}/api/import/praxedo`
       : type === "PIDI"
       ? `${API_URL}/api/import/pidi`
-      : `${API_URL}/api/orange-ppd/import`;
+      : `${API_URL}/api/orange-ppd/import`; // CSV Orange PPD
 
   const response = await fetch(endpoint, { method: "POST", body: formData, signal });
 
@@ -185,12 +194,22 @@ export const uploadPraxedo = (file: File) => importCsv({ type: "PRAXEDO", file }
 export const uploadPidi = (file: File) => importCsv({ type: "PIDI", file });
 export const uploadOrangePpd = (file: File) => importCsv({ type: "ORANGE_PPD", file });
 
+/* =========================
+   ORANGE PPD (CSV + XLSX)
+========================= */
+
 export interface OrangePpdImportSummary {
   import_id: string;
   filename?: string | null;
   row_count?: number | null;
   imported_by?: string | null;
   imported_at?: string | null;
+
+  // Excel-only
+  sheet_name?: string | null;
+
+  // pour l'UI (facultatif)
+  kind?: "CSV" | "XLSX";
 }
 
 export type OrangePpdCompareSummary = {
@@ -222,12 +241,51 @@ export type OrangePpdComparison = {
   reason: "OT_INEXISTANT" | "CROISEMENT_INCOMPLET" | "COMPARAISON_INCOHERENTE" | "OK" | string;
 };
 
+/**
+ * NEW: upload XLSX Orange PPD (PPDATEL multi-feuille)
+ * Endpoint backend: /api/orange-ppd/import-excel
+ */
+export async function uploadOrangePpdExcel(file: File): Promise<ImportCsvResult> {
+  const formData = new FormData();
+  formData.append("file", file);
 
+  const response = await fetch(`${API_URL}/api/orange-ppd/import-excel`, {
+    method: "POST",
+    body: formData,
+  });
 
-export async function listOrangeImports(limit = 20): Promise<OrangePpdImportSummary[]> {
-  const response = await fetch(`${API_URL}/api/orange-ppd/imports?limit=${limit}`);
-  if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Erreur ${response.status}: ${errorText}`);
+  }
+
   return response.json();
+}
+
+/**
+ * CSV + XLSX merged list.
+ * IMPORTANT: il faut que ton backend expose /api/orange-ppd/excel-imports
+ */
+export async function listOrangeImports(limit = 20): Promise<OrangePpdImportSummary[]> {
+  const [csvRes, xlsxRes] = await Promise.all([
+    fetch(`${API_URL}/api/orange-ppd/imports?limit=${limit}`),
+    fetch(`${API_URL}/api/orange-ppd/excel-imports?limit=${limit}`),
+  ]);
+
+  if (!csvRes.ok) throw new Error(`Erreur ${csvRes.status}: ${await csvRes.text()}`);
+  if (!xlsxRes.ok) throw new Error(`Erreur ${xlsxRes.status}: ${await xlsxRes.text()}`);
+
+  const csv = (await csvRes.json()) as OrangePpdImportSummary[];
+  const xlsx = (await xlsxRes.json()) as OrangePpdImportSummary[];
+
+  const merged: OrangePpdImportSummary[] = [
+    ...csv.map((x) => ({ ...x, kind: "CSV" as const })),
+    ...xlsx.map((x) => ({ ...x, kind: "XLSX" as const })),
+  ];
+
+  merged.sort((a, b) => String(b.imported_at || "").localeCompare(String(a.imported_at || "")));
+
+  return merged.slice(0, limit);
 }
 
 export async function listOrangePpdOptions(importId?: string): Promise<string[]> {
@@ -238,11 +296,10 @@ export async function listOrangePpdOptions(importId?: string): Promise<string[]>
   if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
   return response.json();
 }
-export async function compareOrangePpd(params: {
-  importId?: string;
-  ppd?: string;
-  onlyMismatch?: boolean;
-} = {}): Promise<OrangePpdComparison[]> {
+
+export async function compareOrangePpd(
+  params: { importId?: string; ppd?: string; onlyMismatch?: boolean } = {}
+): Promise<OrangePpdComparison[]> {
   const qs = new URLSearchParams();
   if (params.importId) qs.set("import_id", params.importId);
   if (params.ppd?.trim()) qs.set("ppd", params.ppd.trim());
@@ -253,7 +310,9 @@ export async function compareOrangePpd(params: {
   return response.json();
 }
 
-export async function compareOrangePpdSummary(params: { importId?: string; ppd?: string } = {}): Promise<OrangePpdCompareSummary> {
+export async function compareOrangePpdSummary(
+  params: { importId?: string; ppd?: string } = {}
+): Promise<OrangePpdCompareSummary> {
   const qs = new URLSearchParams();
   if (params.importId) qs.set("import_id", params.importId);
   if (params.ppd?.trim()) qs.set("ppd", params.ppd.trim());
