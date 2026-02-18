@@ -36,7 +36,7 @@ def _norm(s: str) -> str:
     s = s.replace("°", "").replace("’", "'")
     s = re.sub(r"\s+", "_", s)
     s = re.sub(r"[^a-z0-9_]+", "_", s)
-    s = re.sub(r"_+", "_", s)  # ✅ NEW: évite desc__site
+    s = re.sub(r"_+", "_", s)
     return s.strip("_")
 
 def _val(h: dict[str, Any], *keys: str) -> str | None:
@@ -123,10 +123,6 @@ def _sa_only_known_columns(model_cls, payload: dict) -> dict:
 # Détection séparateur (ROBUSTE)
 # -------------------------------------------------------------------
 def _detect_delimiter(file: UploadFile, requested: str) -> str:
-    """
-    Détecte ; , \t | avec heuristiques + Sniffer.
-    Corrige le cas "tout l'en-tête en 1 colonne".
-    """
     try:
         pos = file.file.tell()
     except Exception:
@@ -140,28 +136,23 @@ def _detect_delimiter(file: UploadFile, requested: str) -> str:
         txt = head.decode("utf-8-sig", errors="ignore")
         first = (txt.splitlines()[0] if txt else "")
 
-        # Heuristique forte
         counts = {
             ";": first.count(";"),
             ",": first.count(","),
             "\t": first.count("\t"),
             "|": first.count("|"),
         }
-        # si un séparateur est très dominant, on le prend
         best = max(counts, key=counts.get)
         if counts[best] >= 3 and counts[best] >= (counts.get(requested, 0) + 2):
             return best
 
-        # Si l'utilisateur a choisi un séparateur mais l'en-tête montre clairement l'autre
         if requested in counts and counts[requested] > 0:
             return requested
 
-        # Sniffer (fallback)
         try:
             sniffed = csv.Sniffer().sniff(txt, delimiters=[";", ",", "\t", "|"])
             return sniffed.delimiter
         except Exception:
-            # dernier fallback : si tab présent
             if counts["\t"] > 0:
                 return "\t"
             return requested
@@ -194,22 +185,15 @@ def _require_columns_strict(
     required: dict[str, set[str]],
     expected: str
 ) -> None:
-    """
-    required: { "Nom affiché": {"variante_normalisee_1", "variante_normalisee_2", ...} }
-    """
     hs = set(norm_headers)
-
     missing: list[str] = []
     for display_name, variants in required.items():
         if not (hs & set(variants)):
             missing.append(display_name)
 
-    # Cas typique: mauvais séparateur => 1 seule colonne énorme
     if missing and len(raw_headers) <= 2:
-        # si on voit des tabs ou des ; dans le seul header, c'est que le séparateur est faux
         h0 = raw_headers[0] if raw_headers else ""
         if ("\t" in h0) or (";" in h0) or ("," in h0) or ("|" in h0):
-            # On n'empêche pas, mais on donne un message clair
             raise HTTPException(
                 status_code=400,
                 detail=f"CSV {expected}: séparateur incorrect (l'en-tête est lu comme 1 seule colonne). "
@@ -237,7 +221,6 @@ PRAXEDO_REQUIRED = {
     "Code intervention": {"code_intervention", "code_intervenant", "code_interven", "code_interv"},
     "CP": {"cp"},
     "Ville site": {"ville_site", "ville"},
-    # dans tes exports c'est "Desc. site" (pas "Infos site")
     "Desc. site": {"desc_site"},
     "Description": {"description"},
 }
@@ -258,9 +241,11 @@ PIDI_REQUIRED = {
     "Bordereau": {"bordereau"},
     "HT": {"ht", "montant_ht", "prix_majore", "prix_majore_", "prix", "prix_majoré"},
     "Liste des articles": {"liste_des_articles", "liste_articles", "liste_d_articles", "article"},
-    "Num CAC": {"n_cac"},
-    "Comment acqui/rejet": {"comment_acqui_rejet"},
-
+    # IMPORTANT: ces deux-là
+    "N° CAC": {"n_cac"},
+    "Comment. acqui./rejet": {"comment_acqui_rejet"},
+    "Cause acqui./rejet": {"cause_acqui_rejet"},
+    
 }
 
 # -------------------------------------------------------------------
@@ -324,9 +309,6 @@ def _pidi_dossier_key_safe(h: dict[str, Any], i: int, now: datetime) -> str:
     return f"{numero_ot or 'NA'}|{nd or 'NA'}"
 
 def _parse_ht(value: str | None) -> Decimal | None:
-    """
-    Accepte '66,00' ou '66.00' ou ' 66 '.
-    """
     v = _clean_text(value)
     if not v:
         return None
@@ -352,8 +334,6 @@ async def import_praxedo(
         eff_delim = _detect_delimiter(file, d0)
 
         raw_headers, norm_headers, reader = _read_header_and_reader(file, eff_delim)
-
-        # ✅ colonnes obligatoires strictes (et message clair)
         _require_columns_strict(raw_headers, norm_headers, PRAXEDO_REQUIRED, "PRAXEDO")
 
         rows = 0
@@ -372,10 +352,8 @@ async def import_praxedo(
 
             cloture = _guess_cloture(h)
 
-            # Desc. site (dans tes exports) => colonne raw "Desc. site" => norm "desc_site"
             ds = _clean_text(_val(h, "desc_site", "desc__site"))
             if not ds:
-                # fallback intelligent si un export change le libellé
                 ds = _clean_text(
                     _find_value_by_header_like(raw_row, "desc", "site")
                     or _find_value_by_header_like(raw_row, "infos", "site")
@@ -430,8 +408,6 @@ async def import_pidi(
         eff_delim = _detect_delimiter(file, d0)
 
         raw_headers, norm_headers, reader = _read_header_and_reader(file, eff_delim)
-
-        # ✅ colonnes obligatoires strictes (inclut Liste des articles)
         _require_columns_strict(raw_headers, norm_headers, PIDI_REQUIRED, "PIDI")
 
         now = datetime.utcnow()
@@ -444,7 +420,6 @@ async def import_pidi(
             rows_in += 1
 
             h = _normalize_row(raw_row)
-
             dossier_key = _pidi_dossier_key_safe(h, i, now)
 
             rec = agg.get(dossier_key)
@@ -466,17 +441,19 @@ async def import_pidi(
                     "attachement_valide": None,
                     "bordereau": None,
                     "ht": None,
+                    # NEW
+                    "n_cac": None,
+                    "comment_acqui_rejet": None,
+                    "cause_acqui_rejet": None,
                     "imported_at": now,
                 }
                 agg[dossier_key] = rec
 
-            # PK "N° flux PIDI" si fourni, sinon dossier_key
             flux = _clean_text(_val(h, "n_de_flux_pidi", "n_flux_pidi", "numero_flux_pidi", "flux_pidi"))
             rec["numero_flux_pidi"] = _pick_first(rec.get("numero_flux_pidi"), flux) or dossier_key
 
             rec["contrat"] = _pick_first(rec.get("contrat"), _clean_text(_val(h, "contrat")))
             rec["type_pidi"] = _pick_first(rec.get("type_pidi"), _clean_text(_val(h, "type", "type_pidi", "type_attachement", "type_d_attachement")))
-
             rec["statut"] = _pick_first(rec.get("statut"), _clean_text(_val(h, "statut", "statut_attachement")))
 
             rec["nd"] = _pick_first(rec.get("nd"), _clean_text(_val(h, "nd", "n_d", "ndi", "n_di", "numero_di", "numero_de_di")))
@@ -489,7 +466,6 @@ async def import_pidi(
             rec["code_gestion_chantier"] = _pick_first(rec.get("code_gestion_chantier"), _clean_text(_val(h, "code_gestion_chantier", "code_gestion", "codes_chantier_de_gestion")))
             rec["agence"] = _pick_first(rec.get("agence"), _clean_text(_val(h, "agence")))
 
-            # ✅ Liste des articles obligatoire (si absente => rejet avant)
             rec["liste_articles"] = _merge_articles(
                 rec.get("liste_articles"),
                 _val(h, "liste_des_articles", "liste_articles", "liste_d_articles", "article"),
@@ -499,11 +475,25 @@ async def import_pidi(
             rec["attachement_valide"] = _pick_first(rec.get("attachement_valide"), _clean_text(_val(h, "attachement_valide", "attachement_validee", "attachement_valide_le", "attachement_valide_at")))
 
             rec["bordereau"] = _pick_first(rec.get("bordereau"), _clean_text(_val(h, "bordereau")))
-            # HT numeric tolérant virgule
             ht_new = _parse_ht(_val(h, "ht", "montant_ht", "prix_majore", "prix", "prix_majoré"))
             rec["ht"] = rec.get("ht") if rec.get("ht") is not None else ht_new
-            rec["n_cac"] = _pick_first(rec.get("n_cac"), _clean_text(_val(h, "n_cac", "numero_cac")))
-            rec["comment_acqui_rejet"] = _pick_first(rec.get("comment_acqui_rejet"), _clean_text(_val(h, "commentaire_acqui_rejet", "commentaire", "commentaire_rejet")))
+
+            # ✅ IMPORTANT: capter correctement les 2 colonnes
+            rec["n_cac"] = _pick_first(
+                rec.get("n_cac"),
+                _clean_text(_val(h, "n_cac", "numero_cac", "cac", "n_cac_"))
+            )
+            rec["comment_acqui_rejet"] = _pick_first(
+        rec.get("comment_acqui_rejet"),
+         _clean_text(_val(h, "comment_acqui_rejet", "commentaire_acqui_rejet", "comment_acqui_rejet_pidi"))
+         
+        )
+            rec["cause_acqui_rejet"] = _pick_first(
+        rec.get("cause_acqui_rejet"),
+         _clean_text(_val(h, "cause_acqui_rejet", "cause_acqui_rejet_pidi"))
+         
+        )
+
 
         upserted = 0
         for _, rec in agg.items():
@@ -524,6 +514,9 @@ async def import_pidi(
                 "attachement_valide": rec.get("attachement_valide"),
                 "bordereau": rec.get("bordereau"),
                 "ht": rec.get("ht"),
+                # ✅ ICI: on insère vraiment ces champs
+                "n_cac": rec.get("n_cac"),
+                "comment_acqui_rejet": rec.get("comment_acqui_rejet"),
                 "imported_at": now,
             }
 
