@@ -97,6 +97,31 @@ function Chip({ txt }: { txt: string }) {
   );
 }
 
+// ─── Helpers montants Orange ───────────────────────────────────────────────
+
+function amountPillClass(kind: "orange" | "kyntus" | "diff", value?: number | null) {
+  if (kind === "orange") return "bg-orange-100 text-orange-900 border border-orange-300";
+  if (kind === "kyntus") return "bg-blue-50 text-blue-800 border border-blue-200";
+  // diff : vert si ≈ 0, rouge sinon
+  if (Math.abs(Number(value ?? 0)) < 0.01) return "bg-green-100 text-green-800 border border-green-300";
+  return "bg-red-100 text-red-800 border border-red-300";
+}
+
+function AmountPill({ v, kind }: { v: any; kind: "orange" | "kyntus" | "diff" }) {
+  return (
+    <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${amountPillClass(kind, kind === "diff" ? v : undefined)}`}>
+      {fmtNum(v)} €
+    </span>
+  );
+}
+
+function normalizeNds(v: string[] | null | undefined): string[] {
+  if (!v || !Array.isArray(v)) return [];
+  return v.filter(Boolean).map(String);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+
 function formatFrDate(v?: string | null) {
   if (!v) return "—";
   if (/^\d{2}\/\d{2}\/\d{4}/.test(v)) return v;
@@ -292,7 +317,8 @@ function Pagination({
   );
 }
 
-// Helpers pour la comparaison Orange
+// ─── Helpers comparaison Orange ────────────────────────────────────────────
+
 function reasonLabel(r: string) {
   switch ((r || "").toUpperCase()) {
     case "OT_INEXISTANT":
@@ -311,17 +337,12 @@ function reasonLabel(r: string) {
 function orangeRowClass(r: OrangePpdComparison & { reason?: string }) {
   const reason = (r.reason || "").toUpperCase();
 
-  // Jaune: OT inexistant ou croisement incomplet
   if (reason === "OT_INEXISTANT" || reason === "CROISEMENT_INCOMPLET") {
     return "bg-amber-50/40 hover:bg-amber-100/50";
   }
-
-  // Rouge: croisement complet mais comparaison incohérente
   if (reason === "COMPARAISON_INCOHERENTE") {
     return "bg-red-50/40 hover:bg-red-100/50";
   }
-
-  // Vert: OK
   return "bg-green-50/30 hover:bg-green-100/50";
 }
 
@@ -333,8 +354,10 @@ function orangeReasonBadgeKind(r: OrangePpdComparison & { reason?: string }): Ba
   return "gray";
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+
 export default function DossiersList() {
-  // --- affichage des sections (choix utilisateur) ---
+  // --- affichage des sections ---
   const [showOrangeSection, setShowOrangeSection] = useState(false);
   const [showDossiersSection, setShowDossiersSection] = useState(true);
 
@@ -365,12 +388,13 @@ export default function DossiersList() {
   const [orangePpdOptions, setOrangePpdOptions] = useState<string[]>([]);
   const [selectedOrangePpd, setSelectedOrangePpd] = useState<string>("");
   const [onlyOrangeMismatch, setOnlyOrangeMismatch] = useState(false);
-  
-  // Filtres supplémentaires pour Orange
+
+  // Filtres tableau Orange
   const [orangeStatus, setOrangeStatus] = useState<"ALL" | "OK" | "A_VERIFIER">("ALL");
   const [orangeCroisementFilter, setOrangeCroisementFilter] = useState<string>("ALL");
   const [orangeOtSearch, setOrangeOtSearch] = useState<string>("");
-  
+  const [orangeNdSearch, setOrangeNdSearch] = useState<string>("");
+
   const [loadingOrange, setLoadingOrange] = useState(false);
   const [exportingOrange, setExportingOrange] = useState(false);
 
@@ -444,6 +468,7 @@ export default function DossiersList() {
         setOrangeStatus("ALL");
         setOrangeCroisementFilter("ALL");
         setOrangeOtSearch("");
+        setOrangeNdSearch("");
 
         if (!selectedOrangeImportId && imports.length > 0) {
           setSelectedOrangeImportId(imports[0].import_id);
@@ -457,93 +482,125 @@ export default function DossiersList() {
     [selectedOrangeImportId, selectedOrangePpd, onlyOrangeMismatch]
   );
 
-  // --- Obtenir les valeurs uniques pour les filtres ---
+  // --- Valeurs uniques pour filtre croisement ---
   const uniqueCroisementStatus = useMemo(() => {
     const statuses = new Set<string>();
-    orangeRows.forEach(row => {
-      if (row.statut_croisement) {
-        statuses.add(row.statut_croisement);
-      }
+    orangeRows.forEach((row) => {
+      if (row.statut_croisement) statuses.add(row.statut_croisement);
     });
     return Array.from(statuses).sort();
   }, [orangeRows]);
 
-  // --- Orange filtered + paginated + enrichi avec raison et statuts ---
+  // --- Orange filtered + paginated + enrichi avec reason et statuts ---
   const orangeRowsFiltered = useMemo(() => {
-    console.log("Filtrage - Statut:", orangeStatus, "Croisement:", orangeCroisementFilter, "Recherche OT:", orangeOtSearch);
-    
-    // Enrichir les lignes avec les propriétés calculées
-    const enrichedRows = orangeRows.map(row => ({
-      ...row,
-      ot_existant: row.facturation_kyntus_ht !== null && row.facturation_kyntus_ht !== undefined,
-      croisement_complet: row.statut_croisement === "OK",
-      reason: (() => {
-        if (!row.ot_existant) return "OT_INEXISTANT";
+    const enrichedRows = orangeRows.map((row) => {
+      const ndList = normalizeNds(row.nds);
+      const hasKyntus =
+        row.facturation_kyntus_ht !== null && row.facturation_kyntus_ht !== undefined;
+
+      const reason = (() => {
+        // si le backend renvoie "reason", on le respecte
+        const backendReason = row.reason;
+        if (backendReason) return String(backendReason).toUpperCase();
+
+        // fallback
+        if (!hasKyntus) return "OT_INEXISTANT";
         if (row.statut_croisement !== "OK") return "CROISEMENT_INCOMPLET";
-        if (row.diff_ht !== null && Math.abs(row.diff_ht) >= 0.01) return "COMPARAISON_INCOHERENTE";
-        if (row.diff_ttc !== null && Math.abs(row.diff_ttc) >= 0.01) return "COMPARAISON_INCOHERENTE";
+        if (
+          row.diff_ht !== null &&
+          row.diff_ht !== undefined &&
+          Math.abs(Number(row.diff_ht)) >= 0.01
+        )
+          return "COMPARAISON_INCOHERENTE";
+        if (
+          row.diff_ttc !== null &&
+          row.diff_ttc !== undefined &&
+          Math.abs(Number(row.diff_ttc)) >= 0.01
+        )
+          return "COMPARAISON_INCOHERENTE";
         return "OK";
-      })()
-    }));
+      })();
+
+      return {
+        ...row,
+        nds: ndList,
+        ot_existant: hasKyntus,
+        croisement_complet: row.statut_croisement === "OK",
+        reason,
+      };
+    });
 
     let rows = enrichedRows;
 
-    // Filtre par statut (OK/A vérifier) - basé sur reason
-    if (orangeStatus === "OK") {
-      rows = rows.filter((r) => r.reason === "OK");
-    }
-    if (orangeStatus === "A_VERIFIER") {
-      rows = rows.filter((r) => r.reason !== "OK");
-    }
+    // Filtre OK / à vérifier
+    if (orangeStatus === "OK") rows = rows.filter((r) => r.reason === "OK");
+    if (orangeStatus === "A_VERIFIER") rows = rows.filter((r) => r.reason !== "OK");
 
-    // Filtre par statut de croisement
+    // Filtre croisement
     if (orangeCroisementFilter !== "ALL") {
       rows = rows.filter((r) => r.statut_croisement === orangeCroisementFilter);
     }
 
-    // Filtre par recherche OT (recherche textuelle)
+    // Filtre OT (num_ot)
     if (orangeOtSearch.trim() !== "") {
       const searchTerm = orangeOtSearch.trim().toLowerCase();
-      rows = rows.filter((r) => 
-        r.num_ot.toLowerCase().includes(searchTerm)
+      rows = rows.filter((r) =>
+        String(r.num_ot || "").toLowerCase().includes(searchTerm)
       );
     }
 
-    console.log("Résultat filtrage:", rows.length, "lignes");
-    
+    // Filtre ND
+    if (orangeNdSearch.trim() !== "") {
+      const ndNeedle = orangeNdSearch.trim().toLowerCase();
+      rows = rows.filter((r) =>
+        (r.nds as string[]).some((nd: string) => nd.toLowerCase().includes(ndNeedle))
+      );
+    }
+
+    // Tri : non-OK en premier, puis par num_ot
     return [...rows].sort((a, b) => {
-      // Trier par raison (OK en premier)
-      if (a.reason === "OK" && b.reason !== "OK") return -1;
-      if (a.reason !== "OK" && b.reason === "OK") return 1;
-      return 0;
+      const aBad = a.reason !== "OK";
+      const bBad = b.reason !== "OK";
+      if (aBad && !bBad) return -1;
+      if (!aBad && bBad) return 1;
+      return String(a.num_ot || "").localeCompare(String(b.num_ot || ""));
     });
-  }, [orangeRows, orangeStatus, orangeCroisementFilter, orangeOtSearch]);
+  }, [orangeRows, orangeStatus, orangeCroisementFilter, orangeOtSearch, orangeNdSearch]);
 
   // --------- EXPORT ORANGE EXCEL ----------
   const exportOrangeExcel = useCallback(async () => {
     if (!orangeRowsFiltered.length) return;
-    
+
     setExportingOrange(true);
     try {
-      const dataToExport = orangeRowsFiltered.map(r => ({
-        'Num OT': r.num_ot,
-        'OT Existant': r.ot_existant ? 'Oui' : 'Non',
-        'Statut Croisement': r.statut_croisement ?? '—',
-        'Raison': reasonLabel(r.reason),
-        'Orange HT': r.facturation_orange_ht,
-        'Kyntus HT': r.facturation_kyntus_ht,
-        'Diff HT': r.diff_ht,
-        'Orange TTC': r.facturation_orange_ttc,
-        'Kyntus TTC': r.facturation_kyntus_ttc,
-        'Diff TTC': r.diff_ttc,
-        'Vérification': r.reason === "OK" ? 'OK' : 'A vérifier'
-      }));
+      const dataToExport = orangeRowsFiltered.map((r) => {
+        const ndList = normalizeNds(r.nds);
+        const otsList = r.numero_ots ?? [];
+        return {
+          "Num OT": r.num_ot,
+          "Relevé": r.releve ?? "—",
+          "ND(s)": ndList.length ? ndList.join(", ") : "—",
+          "OT PIDI": otsList.length ? otsList.join(", ") : "—",
+          "OT Existant": r.ot_existant ? "Oui" : "Non",
+          "Statut Croisement": r.statut_croisement ?? "—",
+          "Raison": reasonLabel(r.reason ?? ""),
+          "Orange HT": r.facturation_orange_ht,
+          "Kyntus HT": r.facturation_kyntus_ht,
+          "Diff HT": r.diff_ht,
+          "Orange TTC": r.facturation_orange_ttc,
+          "Kyntus TTC": r.facturation_kyntus_ttc,
+          "Diff TTC": r.diff_ttc,
+        };
+      });
 
-      const XLSX = await import('xlsx');
+      const XLSX = await import("xlsx");
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(dataToExport);
-      
-      const wscols = [
+
+      ws["!cols"] = [
+        { wch: 15 },
+        { wch: 14 },
+        { wch: 30 },
         { wch: 15 },
         { wch: 12 },
         { wch: 18 },
@@ -556,14 +613,15 @@ export default function DossiersList() {
         { wch: 12 },
         { wch: 15 },
       ];
-      ws['!cols'] = wscols;
-      
-      const importInfo = selectedOrangeImportId 
-        ? orangeImports.find(i => i.import_id === selectedOrangeImportId) 
+
+      const importInfo = selectedOrangeImportId
+        ? orangeImports.find((i) => i.import_id === selectedOrangeImportId)
         : null;
-      const fileName = `comparaison_orange_${importInfo?.filename ?? 'export'}_${new Date().toISOString().slice(0,10)}.xlsx`;
-      
-      XLSX.utils.book_append_sheet(wb, ws, 'Comparaison Orange');
+      const fileName = `comparaison_orange_${importInfo?.filename ?? "export"}_${new Date()
+        .toISOString()
+        .slice(0, 10)}.xlsx`;
+
+      XLSX.utils.book_append_sheet(wb, ws, "Comparaison Orange");
       XLSX.writeFile(wb, fileName);
     } catch (e: any) {
       setError(e?.message || "Erreur lors de l'export Excel Orange");
@@ -701,7 +759,11 @@ export default function DossiersList() {
 
       <FiltersBar onSearch={(f) => load(f)} loading={loading} statuts={statutsFinal} ppds={ppdOptions} />
 
-      {error && <div className="mx-2 p-2 rounded border border-red-200 bg-red-50 text-sm text-red-700">{error}</div>}
+      {error && (
+        <div className="mx-2 p-2 rounded border border-red-200 bg-red-50 text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
       {/* ACTIONS + choix affichage */}
       <div className="flex items-center justify-between px-2">
@@ -709,11 +771,19 @@ export default function DossiersList() {
 
         <div className="flex items-center gap-2 flex-wrap">
           <label className="inline-flex items-center gap-2 text-sm border rounded px-3 py-2 bg-white">
-            <input type="checkbox" checked={showDossiersSection} onChange={(e) => setShowDossiersSection(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={showDossiersSection}
+              onChange={(e) => setShowDossiersSection(e.target.checked)}
+            />
             Afficher Dossiers
           </label>
           <label className="inline-flex items-center gap-2 text-sm border rounded px-3 py-2 bg-white">
-            <input type="checkbox" checked={showOrangeSection} onChange={(e) => setShowOrangeSection(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={showOrangeSection}
+              onChange={(e) => setShowOrangeSection(e.target.checked)}
+            />
             Afficher Orange
           </label>
 
@@ -819,7 +889,9 @@ export default function DossiersList() {
         )}
       </div>
 
-      {/* ORANGE SECTION */}
+      {/* ═══════════════════════════════════════════════
+          ORANGE SECTION
+      ══════════════════════════════════════════════════ */}
       {showOrangeSection && (
         <div className="mx-2 rounded-lg border bg-white p-4 space-y-3">
           <div className="flex items-center justify-between gap-3">
@@ -852,6 +924,7 @@ export default function DossiersList() {
             </div>
           </div>
 
+          {/* Sélecteurs API */}
           <div className="flex flex-wrap items-center gap-3">
             <select
               value={selectedOrangeImportId}
@@ -861,7 +934,8 @@ export default function DossiersList() {
               <option value="">Dernier import</option>
               {orangeImports.map((it) => (
                 <option key={it.import_id} value={it.import_id}>
-                  {(it.imported_at ?? "?").replace("T", " ").slice(0, 19)} • {it.filename ?? "sans nom"} • {it.row_count ?? 0} lignes
+                  {(it.imported_at ?? "?").replace("T", " ").slice(0, 19)} • {it.filename ?? "sans nom"} •{" "}
+                  {it.row_count ?? 0} lignes
                 </option>
               ))}
             </select>
@@ -902,11 +976,11 @@ export default function DossiersList() {
             </button>
           </div>
 
-          {/* Filtres supplémentaires pour Orange */}
+          {/* Filtres tableau */}
           <div className="flex flex-wrap items-center gap-3 mt-2 p-3 bg-gray-50 rounded-lg border">
             <div className="text-xs font-medium text-gray-700 mr-1">Filtres tableau :</div>
-            
-            {/* Filtre par statut (OK/A vérifier) */}
+
+            {/* Filtre statut OK / à vérifier */}
             <select
               className="border rounded px-2 py-2 text-sm min-w-[140px]"
               value={orangeStatus}
@@ -914,14 +988,13 @@ export default function DossiersList() {
                 setOrangeStatus(e.target.value as "ALL" | "OK" | "A_VERIFIER");
                 setOrangePage(1);
               }}
-              title="Filtrer par statut de vérification"
             >
               <option value="ALL">Tous les statuts</option>
               <option value="OK">OK uniquement</option>
               <option value="A_VERIFIER">À vérifier uniquement</option>
             </select>
 
-            {/* Filtre par statut de croisement */}
+            {/* Filtre croisement */}
             <select
               className="border rounded px-2 py-2 text-sm min-w-[180px]"
               value={orangeCroisementFilter}
@@ -929,17 +1002,16 @@ export default function DossiersList() {
                 setOrangeCroisementFilter(e.target.value);
                 setOrangePage(1);
               }}
-              title="Filtrer par statut de croisement"
             >
               <option value="ALL">Tous les croisements</option>
-              {uniqueCroisementStatus.map(status => (
+              {uniqueCroisementStatus.map((status) => (
                 <option key={status} value={status}>
                   {status.replaceAll("_", " ")}
                 </option>
               ))}
             </select>
 
-            {/* Recherche par numéro OT */}
+            {/* Recherche OT */}
             <div className="flex items-center gap-1">
               <input
                 type="text"
@@ -958,7 +1030,33 @@ export default function DossiersList() {
                     setOrangePage(1);
                   }}
                   className="p-2 text-gray-500 hover:text-gray-700"
-                  title="Effacer la recherche"
+                  title="Effacer la recherche OT"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Recherche ND */}
+            <div className="flex items-center gap-1">
+              <input
+                type="text"
+                placeholder="Filtrer ND..."
+                value={orangeNdSearch}
+                onChange={(e) => {
+                  setOrangeNdSearch(e.target.value);
+                  setOrangePage(1);
+                }}
+                className="border rounded px-3 py-2 text-sm min-w-[200px]"
+              />
+              {orangeNdSearch && (
+                <button
+                  onClick={() => {
+                    setOrangeNdSearch("");
+                    setOrangePage(1);
+                  }}
+                  className="p-2 text-gray-500 hover:text-gray-700"
+                  title="Effacer filtre ND"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -966,7 +1064,7 @@ export default function DossiersList() {
             </div>
           </div>
 
-          {/* TOTAUX - alignés sur UNE SEULE LIGNE avec couleurs Orange/Kyntus */}
+          {/* TOTAUX */}
           {orangeSummary && (
             <div className="flex flex-wrap items-center gap-4 w-full mt-2 bg-gray-50 p-4 rounded-lg border">
               <div className="flex items-center gap-2">
@@ -975,61 +1073,73 @@ export default function DossiersList() {
                   {fmtNum(orangeSummary.orange_total_ht)} €
                 </span>
               </div>
-              
+
               <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-gray-600">Orange Total TTC</span>
                 <span className="inline-flex items-center px-3 py-1.5 rounded-md text-sm font-mono font-semibold bg-orange-100 text-orange-900 border border-orange-300">
                   {fmtNum(orangeSummary.orange_total_ttc)} €
                 </span>
               </div>
-              
+
               <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-gray-600">Kyntus Total HT</span>
                 <span className="inline-flex items-center px-3 py-1.5 rounded-md text-sm font-mono font-semibold bg-blue-50 text-blue-800 border border-blue-300">
                   {fmtNum(orangeSummary.kyntus_total_ht)} €
                 </span>
               </div>
-              
+
               <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-gray-600">Kyntus Total TTC</span>
                 <span className="inline-flex items-center px-3 py-1.5 rounded-md text-sm font-mono font-semibold bg-blue-50 text-blue-800 border border-blue-300">
                   {fmtNum(orangeSummary.kyntus_total_ttc)} €
                 </span>
               </div>
-              
+
               <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-gray-600">Écart HT</span>
-                <span className={`inline-flex items-center px-3 py-1.5 rounded-md text-sm font-mono font-semibold ${
-                  Math.abs(orangeSummary.ecart_ht) < 0.01 
-                    ? 'bg-green-100 text-green-800 border border-green-300' 
-                    : 'bg-red-100 text-red-800 border border-red-300'
-                }`}>
+                <span
+                  className={`inline-flex items-center px-3 py-1.5 rounded-md text-sm font-mono font-semibold ${
+                    orangeSummary.ecart_ht >= 0
+                      ? "bg-green-100 text-green-800 border border-green-300"
+                      : "bg-red-100 text-red-800 border border-red-300"
+                  }`}
+                >
                   {fmtNum(orangeSummary.ecart_ht)} €
                 </span>
               </div>
-              
+
               <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-gray-600">Écart TTC</span>
-                <span className={`inline-flex items-center px-3 py-1.5 rounded-md text-sm font-mono font-semibold ${
-                  Math.abs(orangeSummary.ecart_ttc) < 0.01 
-                    ? 'bg-green-100 text-green-800 border border-green-300' 
-                    : 'bg-red-100 text-red-800 border border-red-300'
-                }`}>
+                <span
+                  className={`inline-flex items-center px-3 py-1.5 rounded-md text-sm font-mono font-semibold ${
+                    orangeSummary.ecart_ttc >= 0
+                      ? "bg-green-100 text-green-800 border border-green-300"
+                      : "bg-red-100 text-red-800 border border-red-300"
+                  }`}
+                >
                   {fmtNum(orangeSummary.ecart_ttc)} €
                 </span>
               </div>
             </div>
           )}
 
+          {/* Compteurs + pagination */}
           <div className="flex items-center justify-between w-full mt-1">
             <div className="text-xs text-gray-600">
-              {orangeRowsFiltered.length} ligne(s) • OK: {orangeRowsFiltered.filter(r => r.reason === "OK").length} • À vérifier: {orangeRowsFiltered.filter(r => r.reason !== "OK").length} • Import:{" "}
+              {orangeRowsFiltered.length} ligne(s) • OK:{" "}
+              {orangeRowsFiltered.filter((r) => r.reason === "OK").length} • À vérifier:{" "}
+              {orangeRowsFiltered.filter((r) => r.reason !== "OK").length} • Import:{" "}
               {selectedOrangeImportId || "dernier"}
-              {orangeOtSearch && <span className="ml-2">• Recherche: "{orangeOtSearch}"</span>}
-              {orangeCroisementFilter !== "ALL" && <span className="ml-2">• Croisement: {orangeCroisementFilter.replaceAll("_", " ")}</span>}
-              {orangeStatus !== "ALL" && <span className="ml-2">• Statut: {orangeStatus === "OK" ? "OK" : "À vérifier"}</span>}
+              {orangeOtSearch && <span className="ml-2">• OT: "{orangeOtSearch}"</span>}
+              {orangeNdSearch && <span className="ml-2">• ND: "{orangeNdSearch}"</span>}
+              {orangeCroisementFilter !== "ALL" && (
+                <span className="ml-2">• Croisement: {orangeCroisementFilter.replaceAll("_", " ")}</span>
+              )}
+              {orangeStatus !== "ALL" && (
+                <span className="ml-2">• Statut: {orangeStatus === "OK" ? "OK" : "À vérifier"}</span>
+              )}
             </div>
-            
+
             <Pagination
               page={orangePage}
               pageCount={orangePageCount}
@@ -1039,13 +1149,16 @@ export default function DossiersList() {
             />
           </div>
 
-          {/* Table Orange paginée - avec OT, Croisement, Raison */}
+          {/* Table Orange */}
           {orangeRowsFiltered.length > 0 && (
             <div className="overflow-x-auto border rounded mt-4">
-              <table className="min-w-[2000px] w-full text-sm">
+              <table className="min-w-[2400px] w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr className="text-left">
-                    <th className="p-3 text-sm font-semibold">OT</th>
+                    <th className="p-3 text-sm font-semibold">OT (CAC)</th>
+                    <th className="p-3 text-sm font-semibold">Relevé</th>
+                    <th className="p-3 text-sm font-semibold">ND (PIDI)</th>
+                    <th className="p-3 text-sm font-semibold">OT PIDI</th>
                     <th className="p-3 text-sm font-semibold">Croisement</th>
                     <th className="p-3 text-sm font-semibold">Raison</th>
                     <th className="p-3 text-sm font-semibold">Orange HT</th>
@@ -1054,105 +1167,74 @@ export default function DossiersList() {
                     <th className="p-3 text-sm font-semibold">Orange TTC</th>
                     <th className="p-3 text-sm font-semibold">Kyntus TTC</th>
                     <th className="p-3 text-sm font-semibold">Diff TTC</th>
-                    <th className="p-3 text-sm font-semibold">Vérification</th>
                   </tr>
                 </thead>
 
                 <tbody>
                   {orangeRowsPage.map((r) => {
-                    const reason = (r.reason || "").toUpperCase();
-                    
+                    const reason = String(r.reason || "").toUpperCase();
+                    const ndList = normalizeNds(r.nds);
+                    const ndText = ndList.length
+                      ? ndList.slice(0, 3).join(", ") + (ndList.length > 3 ? "…" : "")
+                      : "—";
+                    const otsList = r.numero_ots ?? [];
+                    const otsText = otsList.length
+                      ? otsList.slice(0, 3).join(", ") + (otsList.length > 3 ? "…" : "")
+                      : "—";
+
                     return (
-                      <tr 
-                        key={r.num_ot} 
+                      <tr
+                        key={`${r.num_ot}__${r.releve ?? ""}__${r.numero_ppd_orange ?? ""}`}
                         className={`border-t transition-colors ${orangeRowClass(r)}`}
                       >
-                        <td className="p-3 font-mono font-medium">
-                          {r.num_ot}
+                        <td className="p-3 font-mono font-medium">{r.num_ot || "—"}</td>
+
+                        <td className="p-3 font-mono">
+                          {r.releve ? String(r.releve) : "—"}
                         </td>
-                        
+
+                        <td className="p-3">
+                          <span className="font-mono text-xs" title={ndList.join(", ")}>
+                            {ndText}
+                          </span>
+                        </td>
+
+                        <td className="p-3">
+                          <span className="font-mono text-xs" title={otsList.join(", ")}>
+                            {otsText}
+                          </span>
+                        </td>
+
                         <td className="p-3">
                           <Badge
-                            txt={(r.statut_croisement ?? "—").replaceAll("_", " ")}
-                            kind={r.croisement_complet ? "green" : (r.ot_existant ? "yellow" : "red")}
+                            txt={String(r.statut_croisement ?? "—").replaceAll("_", " ")}
+                            kind={r.croisement_complet ? "green" : r.ot_existant ? "yellow" : "red"}
                           />
                         </td>
-                        
+
                         <td className="p-3">
-                          <Badge 
-                            txt={reasonLabel(r.reason)} 
-                            kind={orangeReasonBadgeKind(r)} 
-                          />
+                          <Badge txt={reasonLabel(r.reason ?? "")} kind={orangeReasonBadgeKind(r)} />
                         </td>
-                        
+
+                        {/* Montants avec pastilles couleurs */}
                         <td className="p-3">
-                          <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
-                            reason === "OK"
-                              ? 'bg-green-100 text-green-800 border border-green-300' 
-                              : 'bg-red-100 text-red-800 border border-red-300'
-                          }`}>
-                            {fmtNum(r.facturation_orange_ht)} €
-                          </span>
+                          <AmountPill v={r.facturation_orange_ht} kind="orange" />
                         </td>
-                        
                         <td className="p-3">
-                          <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
-                            reason === "OK"
-                              ? 'bg-green-100 text-green-800 border border-green-300' 
-                              : 'bg-red-100 text-red-800 border border-red-300'
-                          }`}>
-                            {fmtNum(r.facturation_kyntus_ht)} €
-                          </span>
+                          <AmountPill v={r.facturation_kyntus_ht} kind="kyntus" />
                         </td>
-                        
                         <td className="p-3">
-                          <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
-                            reason === "OK"
-                              ? 'bg-green-100 text-green-800 border border-green-300' 
-                              : 'bg-red-100 text-red-800 border border-red-300'
-                          }`}>
-                            {fmtNum(r.diff_ht)} €
-                          </span>
+                          <AmountPill v={r.diff_ht} kind="diff" />
                         </td>
-                        
+
                         <td className="p-3">
-                          <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
-                            reason === "OK"
-                              ? 'bg-green-100 text-green-800 border border-green-300' 
-                              : 'bg-red-100 text-red-800 border border-red-300'
-                          }`}>
-                            {fmtNum(r.facturation_orange_ttc)} €
-                          </span>
+                          <AmountPill v={r.facturation_orange_ttc} kind="orange" />
                         </td>
-                        
                         <td className="p-3">
-                          <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
-                            reason === "OK"
-                              ? 'bg-green-100 text-green-800 border border-green-300' 
-                              : 'bg-red-100 text-red-800 border border-red-300'
-                          }`}>
-                            {fmtNum(r.facturation_kyntus_ttc)} €
-                          </span>
+                          <AmountPill v={r.facturation_kyntus_ttc} kind="kyntus" />
                         </td>
-                        
                         <td className="p-3">
-                          <span className={`inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-mono font-semibold ${
-                            reason === "OK"
-                              ? 'bg-green-100 text-green-800 border border-green-300' 
-                              : 'bg-red-100 text-red-800 border border-red-300'
-                          }`}>
-                            {fmtNum(r.diff_ttc)} €
-                          </span>
-                        </td>
-                        
-                        <td className="p-3">
-                          {(() => {
-                            const reason = (r.reason || "").toUpperCase();
-                            if (reason === "OK") return <Badge txt="✓ OK" kind="green" />;
-                            if (reason === "COMPARAISON_INCOHERENTE") return <Badge txt="⚠ A vérifier" kind="red" />;
-                            if (reason === "OT_INEXISTANT" || reason === "CROISEMENT_INCOMPLET") return <Badge txt="⚠ A vérifier" kind="yellow" />;
-                            return <Badge txt="—" kind="gray" />;
-                          })()}
+                          <AmountPill v={r.diff_ttc} kind="diff" />
                         </td>
                       </tr>
                     );
@@ -1165,15 +1247,22 @@ export default function DossiersList() {
           {orangeRowsFiltered.length === 0 && (
             <div className="text-sm text-gray-500 py-4 text-center">
               Aucune ligne à afficher (selon les filtres).
-              {orangeOtSearch && <div className="mt-1">Recherche: "{orangeOtSearch}"</div>}
-              {orangeCroisementFilter !== "ALL" && <div className="mt-1">Croisement: {orangeCroisementFilter.replaceAll("_", " ")}</div>}
-              {orangeStatus !== "ALL" && <div className="mt-1">Statut: {orangeStatus === "OK" ? "OK" : "À vérifier"}</div>}
+              {orangeOtSearch && <div className="mt-1">Recherche OT : "{orangeOtSearch}"</div>}
+              {orangeNdSearch && <div className="mt-1">Recherche ND : "{orangeNdSearch}"</div>}
+              {orangeCroisementFilter !== "ALL" && (
+                <div className="mt-1">Croisement : {orangeCroisementFilter.replaceAll("_", " ")}</div>
+              )}
+              {orangeStatus !== "ALL" && (
+                <div className="mt-1">Statut : {orangeStatus === "OK" ? "OK" : "À vérifier"}</div>
+              )}
             </div>
           )}
         </div>
       )}
 
-      {/* DOSSIERS SECTION */}
+      {/* ═══════════════════════════════════════════════
+          DOSSIERS SECTION
+      ══════════════════════════════════════════════════ */}
       {showDossiersSection && (
         <div className="border rounded-lg overflow-auto bg-white mx-2">
           <div className="flex items-center justify-between px-3 py-2 border-b bg-gray-50">
@@ -1240,10 +1329,18 @@ export default function DossiersList() {
                       <td className="p-3">{d.produit_code ?? "—"}</td>
                       <td className="p-3">{d.code_cible ?? "—"}</td>
                       <td className="p-3">
-                        {d.code_cloture_code ? <Badge txt={d.code_cloture_code} kind={clotureKind(d.code_cloture_code)} /> : "—"}
+                        {d.code_cloture_code ? (
+                          <Badge txt={d.code_cloture_code} kind={clotureKind(d.code_cloture_code)} />
+                        ) : (
+                          "—"
+                        )}
                       </td>
                       <td className="p-3">
-                        {d.mode_passage ? <Badge txt={terrainLabel} kind={terrainKind(d.mode_passage)} /> : <span className="text-gray-500">—</span>}
+                        {d.mode_passage ? (
+                          <Badge txt={terrainLabel} kind={terrainKind(d.mode_passage)} />
+                        ) : (
+                          <span className="text-gray-500">—</span>
+                        )}
                       </td>
                       <td className="p-3">
                         <div className="max-w-[520px] truncate" title={d.libelle_regle ?? ""}>
@@ -1258,7 +1355,10 @@ export default function DossiersList() {
                           </div>
                           {sf === "A_VERIFIER" && d.motif_verification ? (
                             <div className="flex items-center gap-2">
-                              <Badge txt={motifLabel(d.motif_verification)} kind={motifKind(d.motif_verification)} />
+                              <Badge
+                                txt={motifLabel(d.motif_verification)}
+                                kind={motifKind(d.motif_verification)}
+                              />
                             </div>
                           ) : null}
                         </div>
@@ -1268,7 +1368,10 @@ export default function DossiersList() {
                       </td>
                       <td className="p-3">
                         {d.statut_praxedo ? (
-                          <Badge txt={praxedoLabel(d)} kind={d.statut_praxedo.toLowerCase().includes("valid") ? "green" : "gray"} />
+                          <Badge
+                            txt={praxedoLabel(d)}
+                            kind={d.statut_praxedo.toLowerCase().includes("valid") ? "green" : "gray"}
+                          />
                         ) : (
                           "—"
                         )}
@@ -1331,24 +1434,46 @@ export default function DossiersList() {
                                   <td className="p-3 w-[80px]">{d.produit_code ?? "—"}</td>
                                   <td className="p-3 w-[120px]">{d.code_cible ?? "—"}</td>
                                   <td className="p-3 w-[110px]">
-                                    {d.code_cloture_code ? <Badge txt={d.code_cloture_code} kind={clotureKind(d.code_cloture_code)} /> : "—"}
+                                    {d.code_cloture_code ? (
+                                      <Badge
+                                        txt={d.code_cloture_code}
+                                        kind={clotureKind(d.code_cloture_code)}
+                                      />
+                                    ) : (
+                                      "—"
+                                    )}
                                   </td>
                                   <td className="p-3 w-[120px]">
-                                    {d.mode_passage ? <Badge txt={terrainLabel} kind={terrainKind(d.mode_passage)} /> : <span className="text-gray-500">—</span>}
+                                    {d.mode_passage ? (
+                                      <Badge txt={terrainLabel} kind={terrainKind(d.mode_passage)} />
+                                    ) : (
+                                      <span className="text-gray-500">—</span>
+                                    )}
                                   </td>
                                   <td className="p-3 w-[520px]">
-                                    <div className="max-w-[520px] truncate" title={d.libelle_regle ?? ""}>
+                                    <div
+                                      className="max-w-[520px] truncate"
+                                      title={d.libelle_regle ?? ""}
+                                    >
                                       {d.libelle_regle ?? "—"}
                                     </div>
                                   </td>
                                   <td className="p-3 w-[220px]">
                                     <div className="flex flex-col gap-1">
                                       <div className="flex items-center gap-2">
-                                        <Badge txt={sf.replaceAll("_", " ")} kind={statutFinalKind(sf)} />
-                                        {d.is_previsite ? <Badge txt="Prévisite" kind="slate" /> : null}
+                                        <Badge
+                                          txt={sf.replaceAll("_", " ")}
+                                          kind={statutFinalKind(sf)}
+                                        />
+                                        {d.is_previsite ? (
+                                          <Badge txt="Prévisite" kind="slate" />
+                                        ) : null}
                                       </div>
                                       {sf === "A_VERIFIER" && d.motif_verification ? (
-                                        <Badge txt={motifLabel(d.motif_verification)} kind={motifKind(d.motif_verification)} />
+                                        <Badge
+                                          txt={motifLabel(d.motif_verification)}
+                                          kind={motifKind(d.motif_verification)}
+                                        />
                                       ) : null}
                                     </div>
                                   </td>
@@ -1357,7 +1482,14 @@ export default function DossiersList() {
                                   </td>
                                   <td className="p-3 w-[140px]">
                                     {d.statut_praxedo ? (
-                                      <Badge txt={praxedoLabel(d)} kind={d.statut_praxedo.toLowerCase().includes("valid") ? "green" : "gray"} />
+                                      <Badge
+                                        txt={praxedoLabel(d)}
+                                        kind={
+                                          d.statut_praxedo.toLowerCase().includes("valid")
+                                            ? "green"
+                                            : "gray"
+                                        }
+                                      />
                                     ) : (
                                       "—"
                                     )}
@@ -1396,7 +1528,9 @@ export default function DossiersList() {
         </div>
       )}
 
-      {/* Drawer */}
+      {/* ═══════════════════════════════════════════════
+          DRAWER
+      ══════════════════════════════════════════════════ */}
       {drawerOpen && selected && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/30" onClick={closeDrawer} />
@@ -1412,16 +1546,29 @@ export default function DossiersList() {
                 </div>
 
                 <div className="flex flex-wrap gap-2 pt-1">
-                  <Badge txt={(selected.statut_final ?? "—").replaceAll("_", " ")} kind={statutFinalKind(selected.statut_final)} />
-                  <Badge txt={(selected.statut_croisement ?? "INCONNU").replaceAll("_", " ")} kind={croisementKind(selected.statut_croisement)} />
+                  <Badge
+                    txt={(selected.statut_final ?? "—").replaceAll("_", " ")}
+                    kind={statutFinalKind(selected.statut_final)}
+                  />
+                  <Badge
+                    txt={(selected.statut_croisement ?? "INCONNU").replaceAll("_", " ")}
+                    kind={croisementKind(selected.statut_croisement)}
+                  />
                   {selected.is_previsite ? <Badge txt="Prévisite" kind="slate" /> : null}
                   {selected.motif_verification ? (
-                    <Badge txt={motifLabel(selected.motif_verification)} kind={motifKind(selected.motif_verification)} />
+                    <Badge
+                      txt={motifLabel(selected.motif_verification)}
+                      kind={motifKind(selected.motif_verification)}
+                    />
                   ) : null}
                 </div>
               </div>
 
-              <button onClick={closeDrawer} className="text-gray-500 hover:text-gray-800" aria-label="Fermer">
+              <button
+                onClick={closeDrawer}
+                className="text-gray-500 hover:text-gray-800"
+                aria-label="Fermer"
+              >
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -1445,7 +1592,10 @@ export default function DossiersList() {
                     k="Clôture"
                     v={
                       selected.code_cloture_code ? (
-                        <Badge txt={selected.code_cloture_code} kind={clotureKind(selected.code_cloture_code)} />
+                        <Badge
+                          txt={selected.code_cloture_code}
+                          kind={clotureKind(selected.code_cloture_code)}
+                        />
                       ) : (
                         "—"
                       )
@@ -1455,7 +1605,10 @@ export default function DossiersList() {
                     k="Motif"
                     v={
                       selected.motif_verification ? (
-                        <Badge txt={motifLabel(selected.motif_verification)} kind={motifKind(selected.motif_verification)} />
+                        <Badge
+                          txt={motifLabel(selected.motif_verification)}
+                          kind={motifKind(selected.motif_verification)}
+                        />
                       ) : (
                         <span className="text-gray-500">—</span>
                       )
@@ -1470,7 +1623,10 @@ export default function DossiersList() {
                 <SectionTitle
                   title="Terrain (PBO / passage)"
                   right={
-                    <button className="text-xs text-blue-700 hover:underline" onClick={() => setShowRawTerrain((x) => !x)}>
+                    <button
+                      className="text-xs text-blue-700 hover:underline"
+                      onClick={() => setShowRawTerrain((x) => !x)}
+                    >
                       {showRawTerrain ? "Masquer texte source" : "Voir texte source"}
                     </button>
                   }
@@ -1480,7 +1636,11 @@ export default function DossiersList() {
                   <div className="rounded-lg border bg-gray-50 p-3">
                     <div className="text-xs text-gray-500 mb-1">Mode passage</div>
                     <div className="text-sm font-medium">
-                      {selected.mode_passage ? <Badge txt={selected.mode_passage} kind={terrainKind(selected.mode_passage)} /> : <span className="text-gray-500">—</span>}
+                      {selected.mode_passage ? (
+                        <Badge txt={selected.mode_passage} kind={terrainKind(selected.mode_passage)} />
+                      ) : (
+                        <span className="text-gray-500">—</span>
+                      )}
                     </div>
                   </div>
                   <div className="rounded-lg border bg-gray-50 p-3">
@@ -1510,11 +1670,15 @@ export default function DossiersList() {
                   <div className="space-y-2">
                     <div className="rounded border bg-gray-50 p-3">
                       <div className="text-xs text-gray-500 mb-1">desc_site (source)</div>
-                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">{selected.desc_site ?? "—"}</pre>
+                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">
+                        {selected.desc_site ?? "—"}
+                      </pre>
                     </div>
                     <div className="rounded border bg-gray-50 p-3">
                       <div className="text-xs text-gray-500 mb-1">description (source)</div>
-                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">{selected.description ?? "—"}</pre>
+                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">
+                        {selected.description ?? "—"}
+                      </pre>
                     </div>
                   </div>
                 )}
@@ -1523,7 +1687,10 @@ export default function DossiersList() {
               <div className="rounded-lg border bg-white p-4 space-y-3">
                 <SectionTitle title="Règle appliquée" />
                 <div className="space-y-2">
-                  <KeyValue k="Code règle" v={<span className="font-mono">{selected.regle_code ?? "—"}</span>} />
+                  <KeyValue
+                    k="Code règle"
+                    v={<span className="font-mono">{selected.regle_code ?? "—"}</span>}
+                  />
                   <KeyValue k="Libellé" v={selected.libelle_regle ?? "—"} />
                   <KeyValue k="Statut facturation" v={selected.statut_facturation ?? "—"} />
                   <KeyValue
@@ -1560,7 +1727,9 @@ export default function DossiersList() {
 
                 <div className="rounded border bg-gray-50 p-3">
                   <div className="text-xs text-gray-500 mb-2">Texte source (PIDI brut)</div>
-                  <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">{selected.liste_articles ?? "—"}</pre>
+                  <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">
+                    {selected.liste_articles ?? "—"}
+                  </pre>
                 </div>
               </div>
             </div>

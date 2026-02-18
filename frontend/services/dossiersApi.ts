@@ -178,7 +178,7 @@ export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvRes
       ? `${API_URL}/api/import/praxedo`
       : type === "PIDI"
       ? `${API_URL}/api/import/pidi`
-      : `${API_URL}/api/orange-ppd/import`; // CSV Orange PPD
+      : `${API_URL}/api/orange-ppd/import`;
 
   const response = await fetch(endpoint, { method: "POST", body: formData, signal });
 
@@ -225,24 +225,34 @@ export type OrangePpdComparison = {
   import_id: string;
   num_ot: string;
 
-  numero_ppd_orange: string | null;
+  numero_ppd_orange?: string | null;
 
-  facturation_orange_ht: number | null;
-  facturation_orange_ttc: number | null;
-  facturation_kyntus_ht: number | null;
-  facturation_kyntus_ttc: number | null;
+  facturation_orange_ht?: number | null;
+  facturation_orange_ttc?: number | null;
+  facturation_kyntus_ht?: number | null;
+  facturation_kyntus_ttc?: number | null;
 
-  diff_ht: number | null;
-  diff_ttc: number | null;
-  a_verifier: boolean;
-  ot_existant: boolean;
-  statut_croisement: "OK" | "ABSENT_PIDI" | "ABSENT_PRAXEDO" | "INCONNU" | string;
-  croisement_complet: boolean;
-  reason: "OT_INEXISTANT" | "CROISEMENT_INCOMPLET" | "COMPARAISON_INCOHERENTE" | "OK" | string;
+  diff_ht?: number | null;
+  diff_ttc?: number | null;
+
+  a_verifier?: boolean | null;
+  ot_existant?: boolean | null;
+  statut_croisement?: string | null;
+  croisement_complet?: boolean | null;
+  reason?: string | null;
+
+  // Nouveaux champs (XLSX relevé par relevé)
+  releve?: string | null;
+
+  // nds peut venir comme array Postgres (text[]) ou string (selon sérialisation)
+  nds?: string[] | string | null;
+
+  // OT réel PIDI si ajouté au back
+  ot_pidi?: string | null;
 };
 
 /**
- * NEW: upload XLSX Orange PPD (PPDATEL multi-feuille)
+ * Upload XLSX Orange PPD (PPDATEL multi-feuille)
  * Endpoint backend: /api/orange-ppd/import-excel
  */
 export async function uploadOrangePpdExcel(file: File): Promise<ImportCsvResult> {
@@ -264,7 +274,6 @@ export async function uploadOrangePpdExcel(file: File): Promise<ImportCsvResult>
 
 /**
  * CSV + XLSX merged list.
- * IMPORTANT: il faut que ton backend expose /api/orange-ppd/excel-imports
  */
 export async function listOrangeImports(limit = 20): Promise<OrangePpdImportSummary[]> {
   const [csvRes, xlsxRes] = await Promise.all([

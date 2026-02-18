@@ -570,6 +570,7 @@ def compare_orange_ppd(
     only_mismatch: bool = Query(default=False),
     db: Session = Depends(get_db),
 ):
+    # detect XLSX import
     is_xlsx = False
     if import_id:
         is_xlsx = bool(
@@ -586,135 +587,64 @@ def compare_orange_ppd(
 
     if is_xlsx:
         sql = """
-    WITH o_tokens AS (
-      SELECT
-        r.import_id,
-        NULLIF(BTRIM(r.ppd_num),'')  AS numero_ppd_orange,
-        NULLIF(BTRIM(r.commande),'') AS commande_raw,
-        SUM(COALESCE(r.montant_brut, 0))   ::numeric(12,2) AS orange_ht,
-        SUM(COALESCE(r.montant_majore, 0)) ::numeric(12,2) AS orange_ttc
-      FROM canonique.orange_ppd_excel_rows r
-      WHERE r.import_id = :import_id
-        AND (:ppd IS NULL OR NULLIF(BTRIM(r.ppd_num),'') = :ppd)
-      GROUP BY r.import_id, 2, 3
-    ),
+        SELECT
+          import_id,
+          n_cac       AS num_ot,
+          releve,
+          numero_ppd_orange,
+          facturation_orange_ht,
+          facturation_orange_ttc,
+          facturation_kyntus_ht,
+          facturation_kyntus_ttc,
+          diff_ht,
+          diff_ttc,
+          a_verifier,
+          match_found AS ot_existant,
+          CASE
+            WHEN reason = 'OK' THEN 'OK'
+            WHEN reason = 'COMPARAISON_INCOHERENTE' THEN 'OK'
+            WHEN reason = 'RELEVE_ABSENT_PIDI' THEN 'OK'
+            ELSE 'ABSENT_PIDI'
+          END AS statut_croisement,
+          (match_found OR reason='RELEVE_ABSENT_PIDI') AS croisement_complet,
+          reason,
+          nds,
+          numero_ots
+        FROM canonique.v_orange_ppd_excel_compare_releve
+        WHERE import_id = :import_id
+          AND (:ppd IS NULL OR numero_ppd_orange = :ppd)
+          AND (:only_mismatch = FALSE OR a_verifier = TRUE)
+        ORDER BY n_cac, releve
+        """
+        rows = db.execute(text(sql), {"import_id": import_id, "ppd": ppd, "only_mismatch": only_mismatch}).mappings().all()
+        return [dict(r) for r in rows]
 
-    -- split commande => plusieurs CAC possibles
-    o AS (
-      SELECT
-        import_id,
-        numero_ppd_orange,
-        -- CAC normalisé (supprime espaces, NBSP, etc.)
-        UPPER(regexp_replace(BTRIM(tok), '\\s+', '', 'g')) AS cac_key,
-        SUM(orange_ht)::numeric(12,2)  AS facturation_orange_ht,
-        SUM(orange_ttc)::numeric(12,2) AS facturation_orange_ttc
-      FROM o_tokens
-      CROSS JOIN LATERAL regexp_split_to_table(COALESCE(commande_raw,''), '[,;|\\n\\r\\t ]+') AS tok
-      WHERE NULLIF(BTRIM(tok),'') IS NOT NULL
-      GROUP BY 1,2,3
-    ),
-
-    p AS (
-      SELECT
-        UPPER(regexp_replace(BTRIM(p.n_cac), '\\s+', '', 'g')) AS cac_key,
-        SUM(COALESCE(p.ht,0))::numeric(12,2) AS pidi_ht,
-        SUM(
-          COALESCE(
-            NULLIF(
-              REPLACE(regexp_replace(BTRIM(p.bordereau), '[^0-9,\\.\\-]', '', 'g'), ',', '.'),
-              ''
-            )::numeric,
-            0
-          )
-        )::numeric(12,2) AS pidi_bordereau
-      FROM raw.pidi p
-      WHERE NULLIF(BTRIM(p.n_cac),'') IS NOT NULL
-      GROUP BY 1
-    )
-
+    # CSV inchangé
+    sql = """
     SELECT
-      o.import_id,
-      o.cac_key AS num_ot,                      -- 1 ligne par OT/CAC
-      o.numero_ppd_orange,
-      o.facturation_orange_ht,
-      o.facturation_orange_ttc,
-
-      COALESCE(p.pidi_ht, 0)::numeric(12,2)        AS facturation_kyntus_ht,
-      COALESCE(p.pidi_bordereau, 0)::numeric(12,2) AS facturation_kyntus_ttc,
-
-      (o.facturation_orange_ht  - COALESCE(p.pidi_ht,0))        ::numeric(12,2) AS diff_ht,
-      (o.facturation_orange_ttc - COALESCE(p.pidi_bordereau,0)) ::numeric(12,2) AS diff_ttc,
-
-      CASE
-        WHEN p.cac_key IS NULL THEN TRUE
-        WHEN (o.facturation_orange_ht  - COALESCE(p.pidi_ht,0)) <> 0 THEN TRUE
-        WHEN (o.facturation_orange_ttc - COALESCE(p.pidi_bordereau,0)) <> 0 THEN TRUE
-        ELSE FALSE
-      END AS a_verifier,
-
-      (p.cac_key IS NOT NULL) AS ot_existant,
-
-      CASE
-        WHEN p.cac_key IS NULL THEN 'ABSENT_PIDI'
-        ELSE 'OK'
-      END AS statut_croisement,
-
-      (p.cac_key IS NOT NULL) AS croisement_complet,
-
-      CASE
-        WHEN p.cac_key IS NULL THEN 'CROISEMENT_INCOMPLET'
-        WHEN (o.facturation_orange_ht  - COALESCE(p.pidi_ht,0)) <> 0 THEN 'COMPARAISON_INCOHERENTE'
-        WHEN (o.facturation_orange_ttc - COALESCE(p.pidi_bordereau,0)) <> 0 THEN 'COMPARAISON_INCOHERENTE'
-        ELSE 'OK'
-      END AS reason
-
-    FROM o
-    LEFT JOIN p ON p.cac_key = o.cac_key
-
-    WHERE (:only_mismatch = FALSE OR
-      CASE
-        WHEN p.cac_key IS NULL THEN TRUE
-        WHEN (o.facturation_orange_ht  - COALESCE(p.pidi_ht,0)) <> 0 THEN TRUE
-        WHEN (o.facturation_orange_ttc - COALESCE(p.pidi_bordereau,0)) <> 0 THEN TRUE
-        ELSE FALSE
-      END = TRUE
-    )
-    ORDER BY o.cac_key
+      import_id,
+      num_ot,
+      numero_ppd_orange,
+      facturation_orange_ht,
+      facturation_orange_ttc,
+      facturation_kyntus_ht,
+      facturation_kyntus_ttc,
+      diff_ht,
+      diff_ttc,
+      a_verifier,
+      ot_existant,
+      statut_croisement,
+      croisement_complet,
+      reason
+    FROM canonique.v_orange_ppd_compare
+    WHERE (:import_id IS NULL OR import_id = :import_id)
+      AND (:ppd IS NULL OR numero_ppd_orange = :ppd)
+      AND (:only_mismatch = FALSE OR a_verifier = TRUE)
+    ORDER BY num_ot
     """
-    rows = db.execute(
-        text(sql),
-        {"import_id": import_id, "ppd": ppd, "only_mismatch": only_mismatch},
-    ).mappings().all()
+    rows = db.execute(text(sql), {"import_id": import_id, "ppd": ppd, "only_mismatch": only_mismatch}).mappings().all()
     return [dict(r) for r in rows]
 
-
-    # CSV: EXACT comme avant
-    rows = db.execute(
-        text("""
-            SELECT
-              import_id,
-              num_ot,
-              numero_ppd_orange,
-              facturation_orange_ht,
-              facturation_orange_ttc,
-              facturation_kyntus_ht,
-              facturation_kyntus_ttc,
-              diff_ht,
-              diff_ttc,
-              a_verifier,
-              ot_existant,
-              statut_croisement,
-              croisement_complet,
-              reason
-            FROM canonique.v_orange_ppd_compare
-            WHERE (:import_id IS NULL OR import_id = :import_id)
-              AND (:ppd IS NULL OR numero_ppd_orange = :ppd)
-              AND (:only_mismatch = FALSE OR a_verifier = TRUE)
-            ORDER BY num_ot
-        """),
-        {"import_id": import_id, "ppd": ppd, "only_mismatch": only_mismatch},
-    ).mappings().all()
-    return [dict(r) for r in rows]
 
 
 @router.get("/compare-summary")
@@ -739,80 +669,38 @@ def compare_orange_ppd_summary(
 
     if is_xlsx:
         sql = """
-    WITH o_tokens AS (
-      SELECT
-        r.import_id,
-        NULLIF(BTRIM(r.ppd_num),'')  AS numero_ppd_orange,
-        NULLIF(BTRIM(r.commande),'') AS commande_raw,
-        SUM(COALESCE(r.montant_brut, 0))   ::numeric(12,2) AS orange_ht,
-        SUM(COALESCE(r.montant_majore, 0)) ::numeric(12,2) AS orange_ttc
-      FROM canonique.orange_ppd_excel_rows r
-      WHERE r.import_id = :import_id
-        AND (:ppd IS NULL OR NULLIF(BTRIM(r.ppd_num),'') = :ppd)
-      GROUP BY r.import_id, 2, 3
-    ),
-    o AS (
-      SELECT
-        UPPER(regexp_replace(BTRIM(tok), '\\s+', '', 'g')) AS cac_key,
-        SUM(orange_ht)::numeric(12,2)  AS orange_ht,
-        SUM(orange_ttc)::numeric(12,2) AS orange_ttc
-      FROM o_tokens
-      CROSS JOIN LATERAL regexp_split_to_table(COALESCE(commande_raw,''), '[,;|\\n\\r\\t ]+') AS tok
-      WHERE NULLIF(BTRIM(tok),'') IS NOT NULL
-      GROUP BY 1
-    ),
-    p AS (
-      SELECT
-        UPPER(regexp_replace(BTRIM(p.n_cac), '\\s+', '', 'g')) AS cac_key,
-        SUM(COALESCE(p.ht,0))::numeric(12,2) AS pidi_ht,
-        SUM(
-          COALESCE(
-            NULLIF(
-              REPLACE(regexp_replace(BTRIM(p.bordereau), '[^0-9,\\.\\-]', '', 'g'), ',', '.'),
-              ''
-            )::numeric,
-            0
-          )
-        )::numeric(12,2) AS pidi_bordereau
-      FROM raw.pidi p
-      WHERE NULLIF(BTRIM(p.n_cac),'') IS NOT NULL
-      GROUP BY 1
-    )
+        SELECT
+          COALESCE(SUM(facturation_orange_ht),0)::numeric(12,2)  AS orange_total_ht,
+          COALESCE(SUM(facturation_orange_ttc),0)::numeric(12,2) AS orange_total_ttc,
+          COALESCE(SUM(COALESCE(facturation_kyntus_ht,0)),0)::numeric(12,2)  AS kyntus_total_ht,
+          COALESCE(SUM(COALESCE(facturation_kyntus_ttc,0)),0)::numeric(12,2) AS kyntus_total_ttc,
+          (COALESCE(SUM(facturation_orange_ht),0)  - COALESCE(SUM(COALESCE(facturation_kyntus_ht,0)),0))::numeric(12,2)  AS ecart_ht,
+          (COALESCE(SUM(facturation_orange_ttc),0) - COALESCE(SUM(COALESCE(facturation_kyntus_ttc,0)),0))::numeric(12,2) AS ecart_ttc
+        FROM canonique.v_orange_ppd_excel_compare_releve
+        WHERE import_id = :import_id
+          AND (:ppd IS NULL OR numero_ppd_orange = :ppd)
+        """
+        row = db.execute(text(sql), {"import_id": import_id, "ppd": ppd}).mappings().first()
+        return dict(row) if row else {
+            "orange_total_ht": 0, "orange_total_ttc": 0,
+            "kyntus_total_ht": 0, "kyntus_total_ttc": 0,
+            "ecart_ht": 0, "ecart_ttc": 0
+        }
+
+    # CSV inchangé
+    sql = """
     SELECT
-      COALESCE(SUM(o.orange_ht), 0)::numeric(12,2)  AS orange_total_ht,
-      COALESCE(SUM(o.orange_ttc), 0)::numeric(12,2) AS orange_total_ttc,
-      COALESCE(SUM(COALESCE(p.pidi_ht,0)), 0)::numeric(12,2)        AS kyntus_total_ht,
-      COALESCE(SUM(COALESCE(p.pidi_bordereau,0)), 0)::numeric(12,2) AS kyntus_total_ttc,
-      (COALESCE(SUM(o.orange_ht),0)  - COALESCE(SUM(COALESCE(p.pidi_ht,0)),0))::numeric(12,2)        AS ecart_ht,
-      (COALESCE(SUM(o.orange_ttc),0) - COALESCE(SUM(COALESCE(p.pidi_bordereau,0)),0))::numeric(12,2) AS ecart_ttc
-    FROM o
-    LEFT JOIN p ON p.cac_key = o.cac_key
+      COALESCE(SUM(facturation_orange_ht), 0)::numeric(12,2)  AS orange_total_ht,
+      COALESCE(SUM(facturation_orange_ttc), 0)::numeric(12,2) AS orange_total_ttc,
+      COALESCE(SUM(facturation_kyntus_ht), 0)::numeric(12,2)  AS kyntus_total_ht,
+      COALESCE(SUM(facturation_kyntus_ttc), 0)::numeric(12,2) AS kyntus_total_ttc,
+      (COALESCE(SUM(facturation_orange_ht), 0) - COALESCE(SUM(facturation_kyntus_ht), 0))::numeric(12,2)  AS ecart_ht,
+      (COALESCE(SUM(facturation_orange_ttc), 0) - COALESCE(SUM(facturation_kyntus_ttc), 0))::numeric(12,2) AS ecart_ttc
+    FROM canonique.v_orange_ppd_compare
+    WHERE (:import_id IS NULL OR import_id = :import_id)
+      AND (:ppd IS NULL OR numero_ppd_orange = :ppd)
     """
     row = db.execute(text(sql), {"import_id": import_id, "ppd": ppd}).mappings().first()
-    return dict(row) if row else {
-        "orange_total_ht": 0, "orange_total_ttc": 0,
-        "kyntus_total_ht": 0, "kyntus_total_ttc": 0,
-        "ecart_ht": 0, "ecart_ttc": 0
-    }
-
-
-    # CSV: comme avant
-    row = db.execute(
-        text("""
-            SELECT
-              COALESCE(SUM(facturation_orange_ht), 0)::numeric(12,2)  AS orange_total_ht,
-              COALESCE(SUM(facturation_orange_ttc), 0)::numeric(12,2) AS orange_total_ttc,
-              COALESCE(SUM(facturation_kyntus_ht), 0)::numeric(12,2)  AS kyntus_total_ht,
-              COALESCE(SUM(facturation_kyntus_ttc), 0)::numeric(12,2) AS kyntus_total_ttc,
-              (COALESCE(SUM(facturation_orange_ht), 0) - COALESCE(SUM(facturation_kyntus_ht), 0))::numeric(12,2)  AS ecart_ht,
-              (COALESCE(SUM(facturation_orange_ttc), 0) - COALESCE(SUM(facturation_kyntus_ttc), 0))::numeric(12,2) AS ecart_ttc
-            FROM canonique.v_orange_ppd_compare
-            WHERE (:import_id IS NULL OR import_id = :import_id)
-              AND (:ppd IS NULL OR numero_ppd_orange = :ppd)
-        """),
-        {"import_id": import_id, "ppd": ppd},
-    ).mappings().first()
-
     return dict(row) if row else {
         "orange_total_ht": 0, "orange_total_ttc": 0,
         "kyntus_total_ht": 0, "kyntus_total_ttc": 0,
