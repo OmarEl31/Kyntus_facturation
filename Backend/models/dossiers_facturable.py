@@ -82,3 +82,9 @@ class VDossierFacturable(Base):
     date_cloture: Mapped[object | None] = mapped_column(DateTime)
     pidi_date_creation: Mapped[object | None] = mapped_column(DateTime)
     generated_at: Mapped[object | None] = mapped_column(DateTime)
+
+    # ✅ NEW (commentaire technicien prioritaire / audit)
+    force_plp: Mapped[bool | None] = mapped_column(Boolean)
+    add_tsfh: Mapped[bool | None] = mapped_column(Boolean)
+    commentaire_technicien: Mapped[str | None] = mapped_column(Text)
+    source_facturation: Mapped[str | None] = mapped_column(Text)

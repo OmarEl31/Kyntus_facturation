@@ -389,7 +389,7 @@ export default function DossiersList() {
   const [showRawTerrain, setShowRawTerrain] = useState(false);
 
   // --- imports ---
-  const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | "ORANGE_PPD" | null>(null);
+  const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | "ORANGE_PPD" | "PRAXEDO_CR10" | null>(null);
 
   // --- orange ---
   const [orangeRows, setOrangeRows] = useState<OrangePpdComparison[]>([]);
@@ -836,6 +836,14 @@ export default function DossiersList() {
           </button>
 
           <button
+            onClick={() => setImportType("PRAXEDO_CR10")}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50"
+          >
+            <Upload className="h-4 w-4" />
+            Commentaire tech (CR10)
+          </button>
+
+          <button
             onClick={exportExcel}
             disabled={isExporting || items.length === 0}
             className="inline-flex items-center gap-2 px-3 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
@@ -1155,126 +1163,125 @@ export default function DossiersList() {
             />
           </div>
 
-{/* Table Orange */}
-{orangeRowsFiltered.length > 0 && (
-  <div className="overflow-x-auto border rounded mt-4">
-    <table className="min-w-[2000px] w-full text-sm">
-      <thead className="bg-gray-50">
-        <tr className="text-left">
-          <th className="p-3 text-sm font-semibold">OT (CAC)</th>
-          <th className="p-3 text-sm font-semibold">Relevé / ND</th>
-          <th className="p-3 text-sm font-semibold">Raison</th>
-          <th className="p-3 text-sm font-semibold">Montant brut (HT)</th>
-          <th className="p-3 text-sm font-semibold">Vision Praxedo (HT)</th>
-          <th className="p-3 text-sm font-semibold">Diff HT</th>
-          <th className="p-3 text-sm font-semibold">Montant majoré (TTC)</th>
-          <th className="p-3 text-sm font-semibold">Vision Praxedo (TTC)</th>
-          <th className="p-3 text-sm font-semibold">Différence</th>
-        </tr>
-      </thead>
+          {/* Table Orange */}
+          {orangeRowsFiltered.length > 0 && (
+            <div className="overflow-x-auto border rounded mt-4">
+              <table className="min-w-[2000px] w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr className="text-left">
+                    <th className="p-3 text-sm font-semibold">OT (CAC)</th>
+                    <th className="p-3 text-sm font-semibold">Relevé / ND</th>
+                    <th className="p-3 text-sm font-semibold">Raison</th>
+                    <th className="p-3 text-sm font-semibold">Montant brut (HT)</th>
+                    <th className="p-3 text-sm font-semibold">Vision Praxedo (HT)</th>
+                    <th className="p-3 text-sm font-semibold">Diff HT</th>
+                    <th className="p-3 text-sm font-semibold">Montant majoré (TTC)</th>
+                    <th className="p-3 text-sm font-semibold">Vision Praxedo (TTC)</th>
+                    <th className="p-3 text-sm font-semibold">Différence</th>
+                  </tr>
+                </thead>
 
-      <tbody>
-        {orangeRowsPage.map((r) => {
-          const ndList = normalizeNds(r.nds);
-          const hasMultipleNds = ndList.length > 1;
-          
-          // Si pas de ND ou un seul ND, afficher une seule ligne
-          if (ndList.length === 0) {
-            return (
-              <tr
-                key={`${r.num_ot}__${r.releve ?? ""}__single`}
-                className={`border-t transition-colors ${orangeRowClass(r)}`}
-              >
-                <td className="p-3 font-mono font-medium align-top">{r.num_ot || "—"}</td>
-                <td className="p-3 align-top">
-                  <div className="font-mono">{r.releve ? String(r.releve) : "—"}</div>
-                  <div className="text-xs text-gray-400 mt-1">—</div>
-                </td>
-                <td className="p-3 align-top">
-                  <Badge txt={reasonLabel(r.reason ?? "")} kind={orangeReasonBadgeKind(r)} />
-                </td>
-                <td className="p-3 align-top">
-                  <AmountPill v={r.facturation_orange_ht} kind="orange" />
-                </td>
-                <td className="p-3 align-top">
-                  <AmountPill v={r.facturation_kyntus_ht} kind="kyntus" />
-                </td>
-                <td className="p-3 align-top">
-                  <AmountPill v={r.diff_ht} kind="diff" />
-                </td>
-                <td className="p-3 align-top">
-                  <AmountPill v={r.facturation_orange_ttc} kind="orange" />
-                </td>
-                <td className="p-3 align-top">
-                  <AmountPill v={r.facturation_kyntus_ttc} kind="kyntus" />
-                </td>
-                <td className="p-3 align-top">
-                  <AmountPill v={r.diff_ttc} kind="diff" />
-                </td>
-              </tr>
-            );
-          }
-          
-          // Première ligne avec le relevé et le premier ND
-          return (
-            <>
-              {/* Première ligne avec le relevé et le premier ND */}
-              <tr
-                key={`${r.num_ot}__${r.releve ?? ""}__0`}
-                className={`border-t transition-colors ${orangeRowClass(r)}`}
-              >
-                <td className="p-3 font-mono font-medium align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                  {r.num_ot || "—"}
-                </td>
-                <td className="p-3 align-top">
-                  <div className="font-mono">{r.releve ? String(r.releve) : "—"}</div>
-                  <div className="text-xs font-mono text-gray-600 mt-1 bg-gray-50 px-2 py-0.5 rounded inline-block">
-                    {ndList[0]}
-                  </div>
-                </td>
-                <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                  <Badge txt={reasonLabel(r.reason ?? "")} kind={orangeReasonBadgeKind(r)} />
-                </td>
-                <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                  <AmountPill v={r.facturation_orange_ht} kind="orange" />
-                </td>
-                <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                  <AmountPill v={r.facturation_kyntus_ht} kind="kyntus" />
-                </td>
-                <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                  <AmountPill v={r.diff_ht} kind="diff" />
-                </td>
-                <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                  <AmountPill v={r.facturation_orange_ttc} kind="orange" />
-                </td>
-                <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                  <AmountPill v={r.facturation_kyntus_ttc} kind="kyntus" />
-                </td>
-                <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                  <AmountPill v={r.diff_ttc} kind="diff" />
-                </td>
-              </tr>
-              
-              {/* Lignes supplémentaires pour les ND suivants */}
-              {ndList.slice(1).map((nd, idx) => (
-                <tr
-                  key={`${r.num_ot}__${r.releve ?? ""}__${idx + 1}`}
-                  className={`transition-colors ${orangeRowClass(r)}`}
-                >
-                  <td className="p-3 align-top">
-                    <div className="text-xs font-mono text-gray-600 bg-gray-50 px-2 py-0.5 rounded inline-block ml-4">
-                      {nd}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </>
-          );
-        })}
-      </tbody>
-    </table>
-  </div>
-)}
+                <tbody>
+                  {orangeRowsPage.map((r) => {
+                    const ndList = normalizeNds(r.nds);
+                    const hasMultipleNds = ndList.length > 1;
+                    
+                    // Si pas de ND ou un seul ND, afficher une seule ligne
+                    if (ndList.length === 0) {
+                      return (
+                        <tr
+                          key={`${r.num_ot}__${r.releve ?? ""}__single`}
+                          className={`border-t transition-colors ${orangeRowClass(r)}`}
+                        >
+                          <td className="p-3 font-mono font-medium align-top">{r.num_ot || "—"}</td>
+                          <td className="p-3 align-top">
+                            <div className="font-mono">{r.releve ? String(r.releve) : "—"}</div>
+                            <div className="text-xs text-gray-400 mt-1">—</div>
+                          </td>
+                          <td className="p-3 align-top">
+                            <Badge txt={reasonLabel(r.reason ?? "")} kind={orangeReasonBadgeKind(r)} />
+                          </td>
+                          <td className="p-3 align-top">
+                            <AmountPill v={r.facturation_orange_ht} kind="orange" />
+                          </td>
+                          <td className="p-3 align-top">
+                            <AmountPill v={r.facturation_kyntus_ht} kind="kyntus" />
+                          </td>
+                          <td className="p-3 align-top">
+                            <AmountPill v={r.diff_ht} kind="diff" />
+                          </td>
+                          <td className="p-3 align-top">
+                            <AmountPill v={r.facturation_orange_ttc} kind="orange" />
+                          </td>
+                          <td className="p-3 align-top">
+                            <AmountPill v={r.facturation_kyntus_ttc} kind="kyntus" />
+                          </td>
+                          <td className="p-3 align-top">
+                            <AmountPill v={r.diff_ttc} kind="diff" />
+                          </td>
+                        </tr>
+                      );
+                    }
+                    
+                    // Première ligne avec le relevé et le premier ND
+                    return (
+                      <>
+                        <tr
+                          key={`${r.num_ot}__${r.releve ?? ""}__0`}
+                          className={`border-t transition-colors ${orangeRowClass(r)}`}
+                        >
+                          <td className="p-3 font-mono font-medium align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                            {r.num_ot || "—"}
+                          </td>
+                          <td className="p-3 align-top">
+                            <div className="font-mono">{r.releve ? String(r.releve) : "—"}</div>
+                            <div className="text-xs font-mono text-gray-600 mt-1 bg-gray-50 px-2 py-0.5 rounded inline-block">
+                              {ndList[0]}
+                            </div>
+                          </td>
+                          <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                            <Badge txt={reasonLabel(r.reason ?? "")} kind={orangeReasonBadgeKind(r)} />
+                          </td>
+                          <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                            <AmountPill v={r.facturation_orange_ht} kind="orange" />
+                          </td>
+                          <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                            <AmountPill v={r.facturation_kyntus_ht} kind="kyntus" />
+                          </td>
+                          <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                            <AmountPill v={r.diff_ht} kind="diff" />
+                          </td>
+                          <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                            <AmountPill v={r.facturation_orange_ttc} kind="orange" />
+                          </td>
+                          <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                            <AmountPill v={r.facturation_kyntus_ttc} kind="kyntus" />
+                          </td>
+                          <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                            <AmountPill v={r.diff_ttc} kind="diff" />
+                          </td>
+                        </tr>
+                        
+                        {/* Lignes supplémentaires pour les ND suivants */}
+                        {ndList.slice(1).map((nd, idx) => (
+                          <tr
+                            key={`${r.num_ot}__${r.releve ?? ""}__${idx + 1}`}
+                            className={`transition-colors ${orangeRowClass(r)}`}
+                          >
+                            <td className="p-3 align-top">
+                              <div className="text-xs font-mono text-gray-600 bg-gray-50 px-2 py-0.5 rounded inline-block ml-4">
+                                {nd}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {orangeRowsFiltered.length === 0 && (
             <div className="text-sm text-gray-500 py-4 text-center">

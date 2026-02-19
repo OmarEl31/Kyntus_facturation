@@ -152,9 +152,9 @@ export async function exportDossiersXlsx(filters: DossiersFilters = {}): Promise
 ========================= */
 
 export interface ImportCsvOptions {
-  type: "PRAXEDO" | "PIDI" | "ORANGE_PPD";
+  type: "PRAXEDO" | "PIDI" | "ORANGE_PPD" | "PRAXEDO_CR10";
   file: File;
-  delimiter?: ";" | ",";
+  delimiter?: ";" | "," | "\t" | "|";
   signal?: AbortSignal;
 }
 
@@ -178,6 +178,8 @@ export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvRes
       ? `${API_URL}/api/import/praxedo`
       : type === "PIDI"
       ? `${API_URL}/api/import/pidi`
+      : type === "PRAXEDO_CR10"
+      ? `${API_URL}/api/import/praxedo-cr10`
       : `${API_URL}/api/orange-ppd/import`;
 
   const response = await fetch(endpoint, { method: "POST", body: formData, signal });
@@ -193,6 +195,7 @@ export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvRes
 export const uploadPraxedo = (file: File) => importCsv({ type: "PRAXEDO", file });
 export const uploadPidi = (file: File) => importCsv({ type: "PIDI", file });
 export const uploadOrangePpd = (file: File) => importCsv({ type: "ORANGE_PPD", file });
+export const uploadPraxedoCr10 = (file: File) => importCsv({ type: "PRAXEDO_CR10", file });
 
 /* =========================
    ORANGE PPD (CSV + XLSX)

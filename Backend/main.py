@@ -9,6 +9,8 @@ from routes.export_dossiers import router as export_dossiers_router
 from routes.regles import router as regles_router
 from routes.debug_db import router as debug_router
 from routes.orange_ppd import router as orange_ppd_router
+from routes.imports import router as imports_router
+
 
 app = FastAPI(title="Kyntus Facturation API")
 

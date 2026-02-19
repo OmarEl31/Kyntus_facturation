@@ -1,4 +1,4 @@
-#Backend/routes/dossiers.py
+# Backend/routes/dossiers.py
 from __future__ import annotations
 
 import io
@@ -8,8 +8,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
+from sqlalchemy import case, or_
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, case
 
 from database.connection import get_db
 from models.dossiers_facturable import VDossierFacturable
@@ -23,6 +23,7 @@ router = APIRouter(prefix="/api/dossiers", tags=["dossiers"])
 # ---------------------------
 
 _TOKEN_RE = re.compile(r"\b[A-Z]{2,}[A-Z0-9]{0,12}\b")
+
 
 def _excel_cell(v: Any) -> str:
     """Convertit n'importe quelle valeur (jsonb, array, datetime, etc.) en string propre pour Excel."""
@@ -39,6 +40,7 @@ def _excel_cell(v: Any) -> str:
         except TypeError:
             return v.isoformat()
     return str(v)
+
 
 def _extract_pidi_tokens(liste_articles: str | None) -> str:
     """Renvoie une string 'TOKEN1 | TOKEN2 | ...' comme dans l'UI chips."""
@@ -174,10 +176,10 @@ def export_dossiers_xlsx(
         "date_planifiee",
         "date_cloture",
         "generated_at",
-        # ✅ Articles (ce qui te manque)
-        "article_facturation_propose",   # terrain proposé
-        "liste_articles",                # PIDI brut
-        "pidi_tokens",                   # tokens extraits (chips)
+        # ✅ Articles
+        "article_facturation_propose",  # terrain proposé
+        "liste_articles",               # PIDI brut
+        "pidi_tokens",                  # tokens extraits (chips)
         # (optionnel) champs JSON utiles
         "services",
         "prix_degressifs",
@@ -187,9 +189,13 @@ def export_dossiers_xlsx(
         "documents_attendus",
         "pieces_facturation",
         "outils_depose",
+        # ✅ AJOUTS demandés (fin de liste)
+        "commentaire_technicien",
+        "source_facturation",
+        "force_plp",
+        "add_tsfh",
     ]
 
-    
     ws.append(headers)
 
     for r in rows:
@@ -224,6 +230,11 @@ def export_dossiers_xlsx(
             _excel_cell(getattr(r, "documents_attendus", None)),
             _excel_cell(getattr(r, "pieces_facturation", None)),
             _excel_cell(getattr(r, "outils_depose", None)),
+            # ✅ AJOUTS demandés (fin de ligne)
+            _excel_cell(getattr(r, "commentaire_technicien", None)),
+            _excel_cell(getattr(r, "source_facturation", None)),
+            _excel_cell(getattr(r, "force_plp", None)),
+            _excel_cell(getattr(r, "add_tsfh", None)),
         ])
 
     # un minimum d'auto-size
