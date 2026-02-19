@@ -20,5 +20,7 @@ class RawPraxedo(Base):
 
     desc_site = Column(Text)
     description = Column(Text)
+    compte_rendu = Column(Text)
+
 
     imported_at = Column(TIMESTAMP)

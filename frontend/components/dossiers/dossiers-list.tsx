@@ -99,12 +99,19 @@ function Chip({ txt }: { txt: string }) {
 
 // ─── Helpers montants Orange ───────────────────────────────────────────────
 
+// MODIFIER cette fonction pour gérer correctement les couleurs selon la valeur
 function amountPillClass(kind: "orange" | "kyntus" | "diff", value?: number | null) {
   if (kind === "orange") return "bg-orange-100 text-orange-900 border border-orange-300";
   if (kind === "kyntus") return "bg-blue-50 text-blue-800 border border-blue-200";
-  // diff : vert si ≈ 0, rouge sinon
-  if (Math.abs(Number(value ?? 0)) < 0.01) return "bg-green-100 text-green-800 border border-green-300";
-  return "bg-red-100 text-red-800 border border-red-300";
+  
+  // Pour "diff" : vert si >= 0, rouge si < 0
+  if (kind === "diff") {
+    const numValue = Number(value ?? 0);
+    if (numValue >= 0) return "bg-green-100 text-green-800 border border-green-300";
+    return "bg-red-100 text-red-800 border border-red-300";
+  }
+  
+  return "bg-gray-100 text-gray-800";
 }
 
 function AmountPill({ v, kind }: { v: any; kind: "orange" | "kyntus" | "diff" }) {
@@ -327,6 +334,8 @@ function reasonLabel(r: string) {
       return "Croisement incomplet";
     case "COMPARAISON_INCOHERENTE":
       return "Comparaison incohérente";
+    case "RELEVE_ABSENT_PIDI":
+      return "Relevé absent PIDI";
     case "OK":
       return "OK";
     default:
@@ -337,11 +346,11 @@ function reasonLabel(r: string) {
 function orangeRowClass(r: OrangePpdComparison & { reason?: string }) {
   const reason = (r.reason || "").toUpperCase();
 
-  if (reason === "OT_INEXISTANT" || reason === "CROISEMENT_INCOMPLET") {
-    return "bg-amber-50/40 hover:bg-amber-100/50";
-  }
-  if (reason === "COMPARAISON_INCOHERENTE") {
+  if (reason === "RELEVE_ABSENT_PIDI") {
     return "bg-red-50/40 hover:bg-red-100/50";
+  }
+  if (reason === "OT_INEXISTANT" || reason === "CROISEMENT_INCOMPLET" || reason === "COMPARAISON_INCOHERENTE") {
+    return "bg-amber-50/40 hover:bg-amber-100/50";
   }
   return "bg-green-50/30 hover:bg-green-100/50";
 }
@@ -349,7 +358,8 @@ function orangeRowClass(r: OrangePpdComparison & { reason?: string }) {
 function orangeReasonBadgeKind(r: OrangePpdComparison & { reason?: string }): BadgeKind {
   const reason = (r.reason || "").toUpperCase();
   if (reason === "OK") return "green";
-  if (reason === "COMPARAISON_INCOHERENTE") return "red";
+  if (reason === "RELEVE_ABSENT_PIDI") return "red";
+  if (reason === "COMPARAISON_INCOHERENTE") return "yellow";
   if (reason === "OT_INEXISTANT" || reason === "CROISEMENT_INCOMPLET") return "yellow";
   return "gray";
 }
@@ -575,12 +585,10 @@ export default function DossiersList() {
     try {
       const dataToExport = orangeRowsFiltered.map((r) => {
         const ndList = normalizeNds(r.nds);
-        const otsList = r.numero_ots ?? [];
         return {
           "Num OT": r.num_ot,
           "Relevé": r.releve ?? "—",
           "ND(s)": ndList.length ? ndList.join(", ") : "—",
-          "OT PIDI": otsList.length ? otsList.join(", ") : "—",
           "OT Existant": r.ot_existant ? "Oui" : "Non",
           "Statut Croisement": r.statut_croisement ?? "—",
           "Raison": reasonLabel(r.reason ?? ""),
@@ -601,11 +609,9 @@ export default function DossiersList() {
         { wch: 15 },
         { wch: 14 },
         { wch: 30 },
-        { wch: 15 },
         { wch: 12 },
         { wch: 18 },
         { wch: 25 },
-        { wch: 12 },
         { wch: 12 },
         { wch: 12 },
         { wch: 12 },
@@ -1149,100 +1155,126 @@ export default function DossiersList() {
             />
           </div>
 
-          {/* Table Orange */}
-          {orangeRowsFiltered.length > 0 && (
-            <div className="overflow-x-auto border rounded mt-4">
-              <table className="min-w-[2400px] w-full text-sm">
-                <thead className="bg-gray-50">
-                  <tr className="text-left">
-                    <th className="p-3 text-sm font-semibold">OT (CAC)</th>
-                    <th className="p-3 text-sm font-semibold">Relevé</th>
-                    <th className="p-3 text-sm font-semibold">ND (PIDI)</th>
-                    <th className="p-3 text-sm font-semibold">OT PIDI</th>
-                    <th className="p-3 text-sm font-semibold">Croisement</th>
-                    <th className="p-3 text-sm font-semibold">Raison</th>
-                    <th className="p-3 text-sm font-semibold">Orange HT</th>
-                    <th className="p-3 text-sm font-semibold">Kyntus HT</th>
-                    <th className="p-3 text-sm font-semibold">Diff HT</th>
-                    <th className="p-3 text-sm font-semibold">Orange TTC</th>
-                    <th className="p-3 text-sm font-semibold">Kyntus TTC</th>
-                    <th className="p-3 text-sm font-semibold">Diff TTC</th>
-                  </tr>
-                </thead>
+{/* Table Orange */}
+{orangeRowsFiltered.length > 0 && (
+  <div className="overflow-x-auto border rounded mt-4">
+    <table className="min-w-[2000px] w-full text-sm">
+      <thead className="bg-gray-50">
+        <tr className="text-left">
+          <th className="p-3 text-sm font-semibold">OT (CAC)</th>
+          <th className="p-3 text-sm font-semibold">Relevé / ND</th>
+          <th className="p-3 text-sm font-semibold">Raison</th>
+          <th className="p-3 text-sm font-semibold">Montant brut (HT)</th>
+          <th className="p-3 text-sm font-semibold">Vision Praxedo (HT)</th>
+          <th className="p-3 text-sm font-semibold">Diff HT</th>
+          <th className="p-3 text-sm font-semibold">Montant majoré (TTC)</th>
+          <th className="p-3 text-sm font-semibold">Vision Praxedo (TTC)</th>
+          <th className="p-3 text-sm font-semibold">Différence</th>
+        </tr>
+      </thead>
 
-                <tbody>
-                  {orangeRowsPage.map((r) => {
-                    const reason = String(r.reason || "").toUpperCase();
-                    const ndList = normalizeNds(r.nds);
-                    const ndText = ndList.length
-                      ? ndList.slice(0, 3).join(", ") + (ndList.length > 3 ? "…" : "")
-                      : "—";
-                    const otsList = r.numero_ots ?? [];
-                    const otsText = otsList.length
-                      ? otsList.slice(0, 3).join(", ") + (otsList.length > 3 ? "…" : "")
-                      : "—";
-
-                    return (
-                      <tr
-                        key={`${r.num_ot}__${r.releve ?? ""}__${r.numero_ppd_orange ?? ""}`}
-                        className={`border-t transition-colors ${orangeRowClass(r)}`}
-                      >
-                        <td className="p-3 font-mono font-medium">{r.num_ot || "—"}</td>
-
-                        <td className="p-3 font-mono">
-                          {r.releve ? String(r.releve) : "—"}
-                        </td>
-
-                        <td className="p-3">
-                          <span className="font-mono text-xs" title={ndList.join(", ")}>
-                            {ndText}
-                          </span>
-                        </td>
-
-                        <td className="p-3">
-                          <span className="font-mono text-xs" title={otsList.join(", ")}>
-                            {otsText}
-                          </span>
-                        </td>
-
-                        <td className="p-3">
-                          <Badge
-                            txt={String(r.statut_croisement ?? "—").replaceAll("_", " ")}
-                            kind={r.croisement_complet ? "green" : r.ot_existant ? "yellow" : "red"}
-                          />
-                        </td>
-
-                        <td className="p-3">
-                          <Badge txt={reasonLabel(r.reason ?? "")} kind={orangeReasonBadgeKind(r)} />
-                        </td>
-
-                        {/* Montants avec pastilles couleurs */}
-                        <td className="p-3">
-                          <AmountPill v={r.facturation_orange_ht} kind="orange" />
-                        </td>
-                        <td className="p-3">
-                          <AmountPill v={r.facturation_kyntus_ht} kind="kyntus" />
-                        </td>
-                        <td className="p-3">
-                          <AmountPill v={r.diff_ht} kind="diff" />
-                        </td>
-
-                        <td className="p-3">
-                          <AmountPill v={r.facturation_orange_ttc} kind="orange" />
-                        </td>
-                        <td className="p-3">
-                          <AmountPill v={r.facturation_kyntus_ttc} kind="kyntus" />
-                        </td>
-                        <td className="p-3">
-                          <AmountPill v={r.diff_ttc} kind="diff" />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+      <tbody>
+        {orangeRowsPage.map((r) => {
+          const ndList = normalizeNds(r.nds);
+          const hasMultipleNds = ndList.length > 1;
+          
+          // Si pas de ND ou un seul ND, afficher une seule ligne
+          if (ndList.length === 0) {
+            return (
+              <tr
+                key={`${r.num_ot}__${r.releve ?? ""}__single`}
+                className={`border-t transition-colors ${orangeRowClass(r)}`}
+              >
+                <td className="p-3 font-mono font-medium align-top">{r.num_ot || "—"}</td>
+                <td className="p-3 align-top">
+                  <div className="font-mono">{r.releve ? String(r.releve) : "—"}</div>
+                  <div className="text-xs text-gray-400 mt-1">—</div>
+                </td>
+                <td className="p-3 align-top">
+                  <Badge txt={reasonLabel(r.reason ?? "")} kind={orangeReasonBadgeKind(r)} />
+                </td>
+                <td className="p-3 align-top">
+                  <AmountPill v={r.facturation_orange_ht} kind="orange" />
+                </td>
+                <td className="p-3 align-top">
+                  <AmountPill v={r.facturation_kyntus_ht} kind="kyntus" />
+                </td>
+                <td className="p-3 align-top">
+                  <AmountPill v={r.diff_ht} kind="diff" />
+                </td>
+                <td className="p-3 align-top">
+                  <AmountPill v={r.facturation_orange_ttc} kind="orange" />
+                </td>
+                <td className="p-3 align-top">
+                  <AmountPill v={r.facturation_kyntus_ttc} kind="kyntus" />
+                </td>
+                <td className="p-3 align-top">
+                  <AmountPill v={r.diff_ttc} kind="diff" />
+                </td>
+              </tr>
+            );
+          }
+          
+          // Première ligne avec le relevé et le premier ND
+          return (
+            <>
+              {/* Première ligne avec le relevé et le premier ND */}
+              <tr
+                key={`${r.num_ot}__${r.releve ?? ""}__0`}
+                className={`border-t transition-colors ${orangeRowClass(r)}`}
+              >
+                <td className="p-3 font-mono font-medium align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                  {r.num_ot || "—"}
+                </td>
+                <td className="p-3 align-top">
+                  <div className="font-mono">{r.releve ? String(r.releve) : "—"}</div>
+                  <div className="text-xs font-mono text-gray-600 mt-1 bg-gray-50 px-2 py-0.5 rounded inline-block">
+                    {ndList[0]}
+                  </div>
+                </td>
+                <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                  <Badge txt={reasonLabel(r.reason ?? "")} kind={orangeReasonBadgeKind(r)} />
+                </td>
+                <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                  <AmountPill v={r.facturation_orange_ht} kind="orange" />
+                </td>
+                <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                  <AmountPill v={r.facturation_kyntus_ht} kind="kyntus" />
+                </td>
+                <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                  <AmountPill v={r.diff_ht} kind="diff" />
+                </td>
+                <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                  <AmountPill v={r.facturation_orange_ttc} kind="orange" />
+                </td>
+                <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                  <AmountPill v={r.facturation_kyntus_ttc} kind="kyntus" />
+                </td>
+                <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
+                  <AmountPill v={r.diff_ttc} kind="diff" />
+                </td>
+              </tr>
+              
+              {/* Lignes supplémentaires pour les ND suivants */}
+              {ndList.slice(1).map((nd, idx) => (
+                <tr
+                  key={`${r.num_ot}__${r.releve ?? ""}__${idx + 1}`}
+                  className={`transition-colors ${orangeRowClass(r)}`}
+                >
+                  <td className="p-3 align-top">
+                    <div className="text-xs font-mono text-gray-600 bg-gray-50 px-2 py-0.5 rounded inline-block ml-4">
+                      {nd}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+)}
 
           {orangeRowsFiltered.length === 0 && (
             <div className="text-sm text-gray-500 py-4 text-center">

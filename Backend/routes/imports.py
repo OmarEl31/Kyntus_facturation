@@ -363,23 +363,33 @@ async def import_praxedo(
 
             if ds:
                 ds_non_null += 1
+                cr = _clean_text(_val(h, "compte_rendu", "compterendu", "compte__rendu", "compte_rendu_"))
+        if not cr:
+            cr = _clean_text(
+                _find_value_by_header_like(raw_row, "compte", "rendu")
+                or _find_value_by_header_like(raw_row, "compte-rendu")
+            )
 
             obj_payload = {
-                "numero": numero,
-                "statut": _val(h, "statut"),
-                "planifiee": _val(h, "planifiee", "planifiee_au", "date_planifiee"),
-                "nom_technicien": _val(h, "nom_technicien", "technicien"),
-                "prenom_technicien": _val(h, "prenom_technicien"),
-                "equipiers": _val(h, "equipiers"),
-                "nd": _val(h, "nd"),
-                "act_prod": _val(h, "act_prod", "activite_produit", "act_prod_code"),
-                "code_intervenant": _val(h, "code_intervention", "code_intervenant", "code_interven", "code_interv") or cloture,
-                "cp": _val(h, "cp"),
-                "ville_site": _val(h, "ville_site", "ville"),
-                "desc_site": ds,
-                "description": desc,
-                "imported_at": now,
-            }
+    "numero": numero,
+    "statut": _val(h, "statut"),
+    "planifiee": _val(h, "planifiee", "planifiee_au", "date_planifiee"),
+    "nom_technicien": _val(h, "nom_technicien", "technicien"),
+    "prenom_technicien": _val(h, "prenom_technicien"),
+    "equipiers": _val(h, "equipiers"),
+    "nd": _val(h, "nd"),
+    "act_prod": _val(h, "act_prod", "activite_produit", "act_prod_code"),
+    "code_intervenant": _val(h, "code_intervention", "code_intervenant", "code_interven", "code_interv") or cloture,
+    "cp": _val(h, "cp"),
+    "ville_site": _val(h, "ville_site", "ville"),
+    "desc_site": ds,
+    "description": desc,
+
+    # ✅ NEW
+    "compte_rendu": cr,
+
+    "imported_at": now,
+}
 
             obj_payload = _sa_only_known_columns(RawPraxedo, obj_payload)
             db.merge(RawPraxedo(**obj_payload))
