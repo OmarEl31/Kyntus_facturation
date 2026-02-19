@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import csv
 import re
+import json  # ✅ NEW
 import unicodedata
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -16,6 +17,8 @@ from sqlalchemy.orm import Session
 from database.connection import get_db
 from models.raw_praxedo import RawPraxedo
 from models.raw_pidi import RawPidi
+from models.raw_praxedo_cr10 import RawPraxedoCr10
+
 
 router = APIRouter(prefix="/api/import", tags=["imports"])
 DEBUG_IMPORTS = os.getenv("DEBUG_IMPORTS", "0") == "1"
@@ -235,17 +238,20 @@ PIDI_REQUIRED = {
     "N° OT": {"numero_ot", "n_ot", "ot", "ot_key", "numero_de_l_ot", "numero_intervention"},
     "N° att.": {"numero_att", "n_att", "n_att_", "n_attachement", "numero_attachement"},
     "OEIE": {"oeie"},
-    "Code gestion chantier": {"code_gestion_chantier", "code_gestion", "codes_chantier_de_gestion"},
+    "Code gestion chantier": {"code_gestion_chantier", "code_gestion_chantier", "code_gestion", "codes_chantier_de_gestion"},
     "Agence": {"agence"},
     "N° PPD": {"n_ppd", "numero_ppd", "ppd", "n_pdd", "numero_pdd", "n__ppd"},
     "Bordereau": {"bordereau"},
     "HT": {"ht", "montant_ht", "prix_majore", "prix_majore_", "prix", "prix_majoré"},
     "Liste des articles": {"liste_des_articles", "liste_articles", "liste_d_articles", "article"},
-    # IMPORTANT: ces deux-là
     "N° CAC": {"n_cac"},
     "Comment. acqui./rejet": {"comment_acqui_rejet"},
     "Cause acqui./rejet": {"cause_acqui_rejet"},
-    
+}
+PRAXEDO_CR10_REQUIRED = {
+    "ID EXTERNE": {"id_externe", "idexterne", "id_externe"},
+    "NOM SITE": {"nom_site", "nom_du_site", "site", "nomsite"},
+    "COMPTE-RENDU": {"compte_rendu", "compterendu", "compte_rendu_"},
 }
 
 # -------------------------------------------------------------------
@@ -320,6 +326,25 @@ def _parse_ht(value: str | None) -> Decimal | None:
         return None
 
 # -------------------------------------------------------------------
+# ✅ NEW: extraction commentaireReleve depuis COMPTE-RENDU
+# -------------------------------------------------------------------
+COMMENT_RELEVE_RE = re.compile(r"#commentairereleve\s*=\s*(.+)", re.IGNORECASE)
+
+def _extract_commentaire_releve(compte_rendu: str | None) -> str | None:
+    """
+    Extrait le commentaire tech réel depuis COMPTE-RENDU:
+    cherche '#commentaireReleve=' puis renvoie le reste (trim).
+    """
+    if not compte_rendu:
+        return None
+    s = _clean_text(compte_rendu) or ""
+    m = COMMENT_RELEVE_RE.search(s)
+    if not m:
+        return None
+    val = (m.group(1) or "").strip()
+    return val if val else None
+
+# -------------------------------------------------------------------
 # Routes
 # -------------------------------------------------------------------
 @router.post("/praxedo")
@@ -363,33 +388,60 @@ async def import_praxedo(
 
             if ds:
                 ds_non_null += 1
-                cr = _clean_text(_val(h, "compte_rendu", "compterendu", "compte__rendu", "compte_rendu_"))
-        if not cr:
-            cr = _clean_text(
-                _find_value_by_header_like(raw_row, "compte", "rendu")
-                or _find_value_by_header_like(raw_row, "compte-rendu")
+
+            # ✅ NEW: capter COMPTE-RENDU + extraire commentaireReleve
+            compte_rendu = _clean_text(
+                _val(h, "compte_rendu", "compterendu", "compte__rendu", "compte_rendu_", "compte_rendu_praxedo")
             )
+            if not compte_rendu:
+                compte_rendu = _clean_text(
+                    _find_value_by_header_like(raw_row, "compte", "rendu")
+                    or _find_value_by_header_like(raw_row, "compte-rendu")
+                )
+
+            commentaire_releve = _extract_commentaire_releve(compte_rendu)
+
+            extra_payload = {
+                "compte_rendu": compte_rendu,
+                "commentaire_releve": commentaire_releve,
+            }
 
             obj_payload = {
-    "numero": numero,
-    "statut": _val(h, "statut"),
-    "planifiee": _val(h, "planifiee", "planifiee_au", "date_planifiee"),
-    "nom_technicien": _val(h, "nom_technicien", "technicien"),
-    "prenom_technicien": _val(h, "prenom_technicien"),
-    "equipiers": _val(h, "equipiers"),
-    "nd": _val(h, "nd"),
-    "act_prod": _val(h, "act_prod", "activite_produit", "act_prod_code"),
-    "code_intervenant": _val(h, "code_intervention", "code_intervenant", "code_interven", "code_interv") or cloture,
-    "cp": _val(h, "cp"),
-    "ville_site": _val(h, "ville_site", "ville"),
-    "desc_site": ds,
-    "description": desc,
+                "numero": numero,
+                "statut": _val(h, "statut"),
+                "planifiee": _val(h, "planifiee", "planifiee_au", "date_planifiee"),
+                "nom_technicien": _val(h, "nom_technicien", "technicien"),
+                "prenom_technicien": _val(h, "prenom_technicien"),
+                "equipiers": _val(h, "equipiers"),
+                "nd": _val(h, "nd"),
+                "act_prod": _val(h, "act_prod", "activite_produit", "act_prod_code"),
+                "code_intervenant": _val(h, "code_intervention", "code_intervenant", "code_interven", "code_interv") or cloture,
+                "cp": _val(h, "cp"),
+                "ville_site": _val(h, "ville_site", "ville"),
+                "desc_site": ds,
+                "description": desc,
 
-    # ✅ NEW
-    "compte_rendu": cr,
+                # ✅ si la colonne existe dans RawPraxedo tu peux aussi la garder en clair
+                "compte_rendu": compte_rendu,
 
-    "imported_at": now,
-}
+                "imported_at": now,
+            }
+
+            # ✅ Stockage dans csv_extra (JSON texte) sans migration DB
+            # - si la colonne n'existe pas dans le modèle, _sa_only_known_columns l'ignorera
+            existing_extra = _val(h, "csv_extra")
+            if existing_extra and str(existing_extra).strip():
+                try:
+                    old = json.loads(existing_extra)
+                    if isinstance(old, dict):
+                        old.update({k: v for k, v in extra_payload.items() if v is not None})
+                        obj_payload["csv_extra"] = json.dumps(old, ensure_ascii=False)
+                    else:
+                        obj_payload["csv_extra"] = json.dumps(extra_payload, ensure_ascii=False)
+                except Exception:
+                    obj_payload["csv_extra"] = json.dumps(extra_payload, ensure_ascii=False)
+            else:
+                obj_payload["csv_extra"] = json.dumps(extra_payload, ensure_ascii=False)
 
             obj_payload = _sa_only_known_columns(RawPraxedo, obj_payload)
             db.merge(RawPraxedo(**obj_payload))
@@ -451,7 +503,6 @@ async def import_pidi(
                     "attachement_valide": None,
                     "bordereau": None,
                     "ht": None,
-                    # NEW
                     "n_cac": None,
                     "comment_acqui_rejet": None,
                     "cause_acqui_rejet": None,
@@ -488,22 +539,18 @@ async def import_pidi(
             ht_new = _parse_ht(_val(h, "ht", "montant_ht", "prix_majore", "prix", "prix_majoré"))
             rec["ht"] = rec.get("ht") if rec.get("ht") is not None else ht_new
 
-            # ✅ IMPORTANT: capter correctement les 2 colonnes
             rec["n_cac"] = _pick_first(
                 rec.get("n_cac"),
                 _clean_text(_val(h, "n_cac", "numero_cac", "cac", "n_cac_"))
             )
             rec["comment_acqui_rejet"] = _pick_first(
-        rec.get("comment_acqui_rejet"),
-         _clean_text(_val(h, "comment_acqui_rejet", "commentaire_acqui_rejet", "comment_acqui_rejet_pidi"))
-         
-        )
+                rec.get("comment_acqui_rejet"),
+                _clean_text(_val(h, "comment_acqui_rejet", "commentaire_acqui_rejet", "comment_acqui_rejet_pidi"))
+            )
             rec["cause_acqui_rejet"] = _pick_first(
-        rec.get("cause_acqui_rejet"),
-         _clean_text(_val(h, "cause_acqui_rejet", "cause_acqui_rejet_pidi"))
-         
-        )
-
+                rec.get("cause_acqui_rejet"),
+                _clean_text(_val(h, "cause_acqui_rejet", "cause_acqui_rejet_pidi"))
+            )
 
         upserted = 0
         for _, rec in agg.items():
@@ -524,9 +571,9 @@ async def import_pidi(
                 "attachement_valide": rec.get("attachement_valide"),
                 "bordereau": rec.get("bordereau"),
                 "ht": rec.get("ht"),
-                # ✅ ICI: on insère vraiment ces champs
                 "n_cac": rec.get("n_cac"),
                 "comment_acqui_rejet": rec.get("comment_acqui_rejet"),
+                "cause_acqui_rejet": rec.get("cause_acqui_rejet"),
                 "imported_at": now,
             }
 
@@ -538,6 +585,66 @@ async def import_pidi(
 
         db.commit()
         return {"ok": True, "rows_in": rows_in, "rows_upserted": upserted, "delimiter_used": eff_delim}
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+
+@router.post("/praxedo-cr10")
+async def import_praxedo_cr10(
+    file: UploadFile = File(...),
+    delimiter_q: str | None = Query(None),
+    delimiter: str = Form(";"),
+    db: Session = Depends(get_db),
+):
+    """
+    Import du nouveau export 'Croisement Factu 10' :
+    - ID EXTERNE => OT (ot_key)
+    - NOM SITE   => ND
+    - COMPTE-RENDU => source du #commentaireReleve=
+    """
+    try:
+        d0 = _resolve_delimiter(delimiter_q, delimiter)
+        eff_delim = _detect_delimiter(file, d0)
+
+        raw_headers, norm_headers, reader = _read_header_and_reader(file, eff_delim)
+        _require_columns_strict(raw_headers, norm_headers, PRAXEDO_CR10_REQUIRED, "PRAXEDO_CR10")
+
+        rows = 0
+        now = datetime.utcnow()
+
+        for raw_row in reader:
+            if not raw_row:
+                continue
+
+            h = _normalize_row(raw_row)
+
+            ot = _clean_text(_val(h, "id_externe"))
+            if not ot:
+                # OT obligatoire pour cette table (sinon pas de clé stable)
+                continue
+
+            nd = _clean_text(_val(h, "nom_site"))
+            cr = _clean_text(_val(h, "compte_rendu"))
+
+            payload = {
+                "id_externe": ot,
+                "nom_site": nd,
+                "compte_rendu": cr,
+                "imported_at": now,
+            }
+
+            payload = _sa_only_known_columns(RawPraxedoCr10, payload)
+            db.merge(RawPraxedoCr10(**payload))
+            rows += 1
+
+        db.commit()
+        return {"ok": True, "rows": rows, "delimiter_used": eff_delim}
 
     except HTTPException:
         db.rollback()
