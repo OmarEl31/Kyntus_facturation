@@ -1,9 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { LayoutDashboard, FileText, Settings, BarChart3, LogOut, Menu, ChevronRight } from 'lucide-react';
+import { LayoutDashboard, FileText, Settings, BarChart3, LogOut, Menu, ChevronRight, DownloadCloud } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
-import Image from 'next/image';
 
 interface MenuItem {
   icon: React.ComponentType<{ className?: string }>;
@@ -18,26 +17,11 @@ export default function Sidebar() {
   const router = useRouter();
 
   const menuItems: MenuItem[] = [
-    { 
-      icon: LayoutDashboard, 
-      label: 'Dashboard', 
-      href: '/dashboard' 
-    },
-    { 
-      icon: FileText, 
-      label: 'Dossiers', 
-      href: '/dossiers' 
-    },
-    { 
-      icon: Settings, 
-      label: 'Règles de facturation', 
-      href: '/regles' 
-    },
-    { 
-      icon: BarChart3, 
-      label: 'Audit', 
-      href: '/audit' 
-    },
+    { icon: LayoutDashboard, label: 'Dashboard', href: '/dashboard' },
+    { icon: FileText, label: 'Dossiers', href: '/dossiers' },
+    { icon: Settings, label: 'Règles de facturation', href: '/regles' },
+    { icon: BarChart3, label: 'Audit', href: '/audit' },
+    { icon: DownloadCloud, label: 'Scraper Praxedo', href: '/scraper' },
   ];
 
   const handleNavigation = (href: string) => {
@@ -45,26 +29,18 @@ export default function Sidebar() {
   };
 
   const handleLogout = () => {
-    // TODO: Implémenter la logique de déconnexion
-    console.log('Déconnexion...');
     router.push('/login');
   };
 
   return (
     <aside
-      className={`
-        bg-white border-r border-gray-200 transition-all duration-300 ease-in-out
-        flex flex-col relative shadow-lg h-screen flex-shrink-0
-        ${isExpanded || isPinned ? 'w-72' : 'w-20'}
-      `}
+      className={bg-white border-r border-gray-200 transition-all duration-300 ease-in-out flex flex-col relative shadow-lg h-screen flex-shrink-0 ${isExpanded || isPinned ? 'w-72' : 'w-20'}}
       onMouseEnter={() => !isPinned && setIsExpanded(true)}
       onMouseLeave={() => !isPinned && setIsExpanded(false)}
     >
-      {/* Header */}
       <div className="p-4 border-b border-gray-200 flex-shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {/* Logo */}
             <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#1e3a5f] to-[#2d5a8c] flex items-center justify-center flex-shrink-0 shadow-md">
               <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <path d="M12 2L2 7L12 12L22 7L12 2Z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -72,140 +48,45 @@ export default function Sidebar() {
                 <path d="M2 12L12 17L22 12" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </div>
-            
-            {/* Title */}
-            <div 
-              className={`
-                transition-all duration-300 overflow-hidden
-                ${isExpanded || isPinned ? 'opacity-100 w-auto' : 'opacity-0 w-0'}
-              `}
-            >
+            <div className={transition-all duration-300 overflow-hidden ${isExpanded || isPinned ? 'opacity-100 w-auto' : 'opacity-0 w-0'}}>
               <h1 className="text-xl font-bold text-[#1e3a5f] whitespace-nowrap">Kyntus</h1>
               <p className="text-sm text-gray-600 whitespace-nowrap">Facturation</p>
             </div>
           </div>
-
-          {/* Pin Button */}
           {(isExpanded || isPinned) && (
-            <button
-              onClick={() => setIsPinned(!isPinned)}
-              className={`
-                p-1.5 rounded-lg transition-all duration-200 hover:bg-gray-100
-                ${isPinned ? 'text-[#ff8c42]' : 'text-gray-400'}
-              `}
-              title={isPinned ? 'Détacher la sidebar' : 'Épingler la sidebar'}
-              aria-label={isPinned ? 'Détacher la sidebar' : 'Épingler la sidebar'}
-            >
+            <button onClick={() => setIsPinned(!isPinned)} className={p-1.5 rounded-lg transition-all duration-200 hover:bg-gray-100 ${isPinned ? 'text-[#ff8c42]' : 'text-gray-400'}}>
               <Menu className="w-5 h-5" />
             </button>
           )}
         </div>
-
-        {/* Partner Badge */}
-        <div 
-          className={`
-            mt-3 transition-all duration-300 overflow-hidden
-            ${isExpanded || isPinned ? 'opacity-100 max-h-10' : 'opacity-0 max-h-0'}
-          `}
-        >
+        <div className={mt-3 transition-all duration-300 overflow-hidden ${isExpanded || isPinned ? 'opacity-100 max-h-10' : 'opacity-0 max-h-0'}}>
           <div className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-orange-100 to-orange-50 border border-orange-200">
             <p className="text-sm font-medium text-[#ff8c42] whitespace-nowrap">Partenaire Orange</p>
           </div>
         </div>
       </div>
 
-      {/* Navigation Menu */}
       <nav className="flex-1 p-3 space-y-1 overflow-y-auto custom-scrollbar">
         {menuItems.map((item, index) => {
           const isActive = pathname === item.href || pathname.startsWith(item.href);
           const Icon = item.icon;
-          
           return (
-            <button
-              key={index}
-              onClick={() => handleNavigation(item.href)}
-              className={`
-                w-full flex items-center gap-3 px-3 py-3 rounded-lg
-                transition-all duration-200 group relative
-                ${isActive 
-                  ? 'bg-gradient-to-r from-[#1e3a5f] to-[#2d5a8c] text-white shadow-md' 
-                  : 'text-gray-700 hover:bg-gray-100'
-                }
-              `}
-              title={!(isExpanded || isPinned) ? item.label : undefined}
-              aria-label={item.label}
-              aria-current={isActive ? 'page' : undefined}
-            >
-              <Icon 
-                className={`
-                  w-5 h-5 flex-shrink-0 transition-colors
-                  ${isActive ? 'text-white' : 'text-gray-600 group-hover:text-[#1e3a5f]'}
-                `} 
-              />
-              
-              <span 
-                className={`
-                  font-medium whitespace-nowrap transition-all duration-300 overflow-hidden
-                  ${isExpanded || isPinned ? 'opacity-100 w-auto' : 'opacity-0 w-0'}
-                `}
-              >
+            <button key={index} onClick={() => handleNavigation(item.href)} className={w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-all duration-200 group relative ${isActive ? 'bg-gradient-to-r from-[#1e3a5f] to-[#2d5a8c] text-white shadow-md' : 'text-gray-700 hover:bg-gray-100'}} title={!(isExpanded || isPinned) ? item.label : undefined}>
+              <Icon className={w-5 h-5 flex-shrink-0 transition-colors ${isActive ? 'text-white' : 'text-gray-600 group-hover:text-[#1e3a5f]'}} />
+              <span className={font-medium whitespace-nowrap transition-all duration-300 overflow-hidden ${isExpanded || isPinned ? 'opacity-100 w-auto' : 'opacity-0 w-0'}}>
                 {item.label}
               </span>
-
-              {/* Active Indicator */}
-              {isActive && (
-                <div className="absolute right-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></div>
-                </div>
-              )}
-
-              {/* Hover Tooltip - Only when collapsed */}
-              {!isExpanded && !isPinned && (
-                <div className="absolute left-full ml-2 px-3 py-2 bg-gray-900 text-white text-sm rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-50 shadow-xl">
-                  {item.label}
-                  <div className="absolute left-0 top-1/2 -translate-x-1 -translate-y-1/2 w-2 h-2 bg-gray-900 rotate-45"></div>
-                </div>
-              )}
             </button>
           );
         })}
       </nav>
 
-      {/* Logout Button */}
       <div className="p-3 border-t border-gray-200 flex-shrink-0">
-        <button 
-          onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-red-600 hover:bg-red-50 transition-all duration-200 group relative"
-          aria-label="Déconnexion"
-        >
+        <button onClick={handleLogout} className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-red-600 hover:bg-red-50 transition-all duration-200 group relative">
           <LogOut className="w-5 h-5 flex-shrink-0" />
-          <span 
-            className={`
-              font-medium whitespace-nowrap transition-all duration-300 overflow-hidden
-              ${isExpanded || isPinned ? 'opacity-100 w-auto' : 'opacity-0 w-0'}
-            `}
-          >
-            Déconnexion
-          </span>
-
-          {/* Hover Tooltip - Only when collapsed */}
-          {!isExpanded && !isPinned && (
-            <div className="absolute left-full ml-2 px-3 py-2 bg-gray-900 text-white text-sm rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-50 shadow-xl">
-              Déconnexion
-              <div className="absolute left-0 top-1/2 -translate-x-1 -translate-y-1/2 w-2 h-2 bg-gray-900 rotate-45"></div>
-            </div>
-          )}
+          <span className={font-medium whitespace-nowrap transition-all duration-300 overflow-hidden ${isExpanded || isPinned ? 'opacity-100 w-auto' : 'opacity-0 w-0'}}>Déconnexion</span>
         </button>
       </div>
-
-      {/* Expand Indicator - Only when collapsed and not hovered */}
-      {!isExpanded && !isPinned && (
-        <div className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 pointer-events-none">
-          <div className="w-6 h-12 bg-white border border-gray-200 rounded-r-lg flex items-center justify-center shadow-md animate-pulse">
-            <ChevronRight className="w-4 h-4 text-gray-400" />
-          </div>
-        </div>
-      )}
     </aside>
   );
 }

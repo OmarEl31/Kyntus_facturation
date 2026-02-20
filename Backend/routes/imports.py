@@ -1,10 +1,11 @@
-# Backend/routes/imports.py
 from __future__ import annotations
 
 import os
 import csv
+import uuid
 import re
-import json  # ✅ NEW
+import json
+import math
 import unicodedata
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -13,7 +14,7 @@ from typing import Any
 
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form, Query
 from sqlalchemy.orm import Session
-
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from database.connection import get_db
 from models.raw_praxedo import RawPraxedo
 from models.raw_pidi import RawPidi
@@ -42,12 +43,14 @@ def _norm(s: str) -> str:
     s = re.sub(r"_+", "_", s)
     return s.strip("_")
 
+
 def _val(h: dict[str, Any], *keys: str) -> str | None:
     for k in keys:
         v = h.get(k)
         if v is not None and str(v).strip() != "":
             return str(v).strip()
     return None
+
 
 def _fix_mojibake(s: str | None) -> str | None:
     if not s:
@@ -60,11 +63,13 @@ def _fix_mojibake(s: str | None) -> str | None:
             return t
     return t
 
+
 def _clean_text(s: str | None) -> str | None:
     if s is None:
         return None
     out = _fix_mojibake(str(s).strip())
     return out if out and out.strip() != "" else None
+
 
 def _pick_first(old: str | None, new: str | None) -> str | None:
     if old is not None and str(old).strip() != "":
@@ -72,6 +77,7 @@ def _pick_first(old: str | None, new: str | None) -> str | None:
     if new is not None and str(new).strip() != "":
         return new
     return None
+
 
 def _merge_articles(old: str | None, new: str | None) -> str | None:
     a = _clean_text(old)
@@ -99,6 +105,7 @@ def _merge_articles(old: str | None, new: str | None) -> str | None:
         merged.append(it)
     return ", ".join(merged) if merged else (a or b)
 
+
 def _normalize_row(r: dict[str, Any]) -> dict[str, Any]:
     """
     Normalisation sans écraser une valeur non vide par une valeur vide (collision de keys).
@@ -118,9 +125,34 @@ def _normalize_row(r: dict[str, Any]) -> dict[str, Any]:
         out[nk] = vv
     return out
 
+
 def _sa_only_known_columns(model_cls, payload: dict) -> dict:
     allowed = set(model_cls.__table__.columns.keys())
     return {k: v for k, v in payload.items() if k in allowed}
+
+
+# -------------------------------------------------------------------
+# digits-only OT (robuste)
+# -------------------------------------------------------------------
+def _digits_only(v: str | None) -> str | None:
+    if not v:
+        return None
+    s = str(v).strip()
+
+    # Cas valeurs type "21692880.0"
+    # On tente un float puis on cast int si c'est un entier
+    try:
+        f = float(s.replace(",", "."))
+        if math.isfinite(f) and abs(f - int(f)) < 1e-9:
+            s = str(int(f))
+    except Exception:
+        pass
+
+    # Garder uniquement les digits
+    s = re.sub(r"\D+", "", s)
+    s = s.lstrip("0")
+    return s if s else None
+
 
 # -------------------------------------------------------------------
 # Détection séparateur (ROBUSTE)
@@ -163,6 +195,7 @@ def _detect_delimiter(file: UploadFile, requested: str) -> str:
     except Exception:
         return requested
 
+
 def _read_header_and_reader(file: UploadFile, delimiter: str):
     try:
         file.file.seek(0)
@@ -175,9 +208,11 @@ def _read_header_and_reader(file: UploadFile, delimiter: str):
     norm_headers = [_norm(h) for h in raw_headers]
     return raw_headers, norm_headers, reader
 
+
 def _resolve_delimiter(delimiter_q: str | None, delimiter_form: str | None) -> str:
     d = (delimiter_q or delimiter_form or ";").strip()
     return d if d in {",", ";", "\t", "|"} else ";"
+
 
 # -------------------------------------------------------------------
 # Vérification strict colonnes obligatoires
@@ -209,6 +244,7 @@ def _require_columns_strict(
             detail=f"CSV {expected}: colonnes obligatoires manquantes: {', '.join(missing)}"
         )
 
+
 # -------------------------------------------------------------------
 # Signatures attendues (strict)
 # -------------------------------------------------------------------
@@ -238,7 +274,7 @@ PIDI_REQUIRED = {
     "N° OT": {"numero_ot", "n_ot", "ot", "ot_key", "numero_de_l_ot", "numero_intervention"},
     "N° att.": {"numero_att", "n_att", "n_att_", "n_attachement", "numero_attachement"},
     "OEIE": {"oeie"},
-    "Code gestion chantier": {"code_gestion_chantier", "code_gestion_chantier", "code_gestion", "codes_chantier_de_gestion"},
+    "Code gestion chantier": {"code_gestion_chantier", "code_gestion", "codes_chantier_de_gestion"},
     "Agence": {"agence"},
     "N° PPD": {"n_ppd", "numero_ppd", "ppd", "n_pdd", "numero_pdd", "n__ppd"},
     "Bordereau": {"bordereau"},
@@ -248,11 +284,13 @@ PIDI_REQUIRED = {
     "Comment. acqui./rejet": {"comment_acqui_rejet"},
     "Cause acqui./rejet": {"cause_acqui_rejet"},
 }
+
 PRAXEDO_CR10_REQUIRED = {
-    "ID EXTERNE": {"id_externe", "idexterne", "id_externe"},
+    "ID EXTERNE": {"id_externe", "idexterne", "id_externe_", "id_externe_ot"},
     "NOM SITE": {"nom_site", "nom_du_site", "site", "nomsite"},
     "COMPTE-RENDU": {"compte_rendu", "compterendu", "compte_rendu_"},
 }
+
 
 # -------------------------------------------------------------------
 # Helpers métier
@@ -268,6 +306,7 @@ def _find_value_by_header_like(raw_row: dict[str, Any], *contains_all: str) -> s
             if s != "":
                 return s
     return None
+
 
 def _guess_cloture(h: dict[str, Any]) -> str | None:
     direct = _val(
@@ -307,12 +346,14 @@ def _guess_cloture(h: dict[str, Any]) -> str | None:
 
     return None
 
+
 def _pidi_dossier_key_safe(h: dict[str, Any], i: int, now: datetime) -> str:
     numero_ot = _clean_text(_val(h, "numero_ot", "n_ot", "ot", "ot_key", "numero_de_l_ot", "numero_intervention"))
     nd = _clean_text(_val(h, "nd", "n_d", "ndi", "n_di", "numero_di", "numero_de_di"))
     if (not numero_ot) and (not nd):
         return f"NO_OTND_{int(now.timestamp())}_{i}"
     return f"{numero_ot or 'NA'}|{nd or 'NA'}"
+
 
 def _parse_ht(value: str | None) -> Decimal | None:
     v = _clean_text(value)
@@ -325,10 +366,12 @@ def _parse_ht(value: str | None) -> Decimal | None:
     except InvalidOperation:
         return None
 
+
 # -------------------------------------------------------------------
-# ✅ NEW: extraction commentaireReleve depuis COMPTE-RENDU
+# extraction commentaireReleve depuis COMPTE-RENDU
 # -------------------------------------------------------------------
 COMMENT_RELEVE_RE = re.compile(r"#commentairereleve\s*=\s*(.+)", re.IGNORECASE)
+
 
 def _extract_commentaire_releve(compte_rendu: str | None) -> str | None:
     """
@@ -343,6 +386,7 @@ def _extract_commentaire_releve(compte_rendu: str | None) -> str | None:
         return None
     val = (m.group(1) or "").strip()
     return val if val else None
+
 
 # -------------------------------------------------------------------
 # Routes
@@ -389,7 +433,7 @@ async def import_praxedo(
             if ds:
                 ds_non_null += 1
 
-            # ✅ NEW: capter COMPTE-RENDU + extraire commentaireReleve
+            # capter COMPTE-RENDU + extraire commentaireReleve
             compte_rendu = _clean_text(
                 _val(h, "compte_rendu", "compterendu", "compte__rendu", "compte_rendu_", "compte_rendu_praxedo")
             )
@@ -421,14 +465,13 @@ async def import_praxedo(
                 "desc_site": ds,
                 "description": desc,
 
-                # ✅ si la colonne existe dans RawPraxedo tu peux aussi la garder en clair
+                # si la colonne existe dans RawPraxedo tu peux aussi la garder en clair
                 "compte_rendu": compte_rendu,
 
                 "imported_at": now,
             }
 
-            # ✅ Stockage dans csv_extra (JSON texte) sans migration DB
-            # - si la colonne n'existe pas dans le modèle, _sa_only_known_columns l'ignorera
+            # Stockage dans csv_extra (JSON texte) sans migration DB
             existing_extra = _val(h, "csv_extra")
             if existing_extra and str(existing_extra).strip():
                 try:
@@ -594,7 +637,6 @@ async def import_pidi(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-
 @router.post("/praxedo-cr10")
 async def import_praxedo_cr10(
     file: UploadFile = File(...),
@@ -602,12 +644,6 @@ async def import_praxedo_cr10(
     delimiter: str = Form(";"),
     db: Session = Depends(get_db),
 ):
-    """
-    Import du nouveau export 'Croisement Factu 10' :
-    - ID EXTERNE => OT (ot_key)
-    - NOM SITE   => ND
-    - COMPTE-RENDU => source du #commentaireReleve=
-    """
     try:
         d0 = _resolve_delimiter(delimiter_q, delimiter)
         eff_delim = _detect_delimiter(file, d0)
@@ -615,8 +651,10 @@ async def import_praxedo_cr10(
         raw_headers, norm_headers, reader = _read_header_and_reader(file, eff_delim)
         _require_columns_strict(raw_headers, norm_headers, PRAXEDO_CR10_REQUIRED, "PRAXEDO_CR10")
 
-        rows = 0
         now = datetime.utcnow()
+
+        # (optionnel mais utile) dédoublonnage dans le fichier: "dernière ligne gagne"
+        by_ot: dict[str, dict[str, Any]] = {}
 
         for raw_row in reader:
             if not raw_row:
@@ -624,27 +662,50 @@ async def import_praxedo_cr10(
 
             h = _normalize_row(raw_row)
 
-            ot = _clean_text(_val(h, "id_externe"))
+            ot_raw = _clean_text(_val(h, "id_externe_ot", "id_externe", "idexterne", "id_externe_"))
+            if not ot_raw:
+                ot_raw = _clean_text(_find_value_by_header_like(raw_row, "id", "externe"))
+
+            ot = re.sub(r"\s+", "", ot_raw) if ot_raw else None
             if not ot:
-                # OT obligatoire pour cette table (sinon pas de clé stable)
                 continue
 
-            nd = _clean_text(_val(h, "nom_site"))
-            cr = _clean_text(_val(h, "compte_rendu"))
+            nd = _clean_text(_val(h, "nom_site", "nom_du_site", "site", "nomsite")) \
+                 or _clean_text(_find_value_by_header_like(raw_row, "nom", "site"))
 
-            payload = {
+            cr = _clean_text(_val(h, "compte_rendu", "compterendu", "compte_rendu_")) \
+                 or _clean_text(_find_value_by_header_like(raw_row, "compte", "rendu"))
+
+            by_ot[ot] = {
                 "id_externe": ot,
                 "nom_site": nd,
                 "compte_rendu": cr,
                 "imported_at": now,
             }
 
-            payload = _sa_only_known_columns(RawPraxedoCr10, payload)
-            db.merge(RawPraxedoCr10(**payload))
-            rows += 1
+        rows_list = list(by_ot.values())
+        if not rows_list:
+            raise HTTPException(status_code=400, detail={
+                "msg": "Aucune ligne exploitable (OT vide ou illisible).",
+                "delimiter_used": eff_delim,
+            })
 
+        t = RawPraxedoCr10.__table__
+        stmt = pg_insert(t).values(rows_list)
+
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[t.c.id_externe],
+            set_={
+                "nom_site": stmt.excluded.nom_site,
+                "compte_rendu": stmt.excluded.compte_rendu,
+                "imported_at": stmt.excluded.imported_at,
+            },
+        )
+
+        db.execute(stmt)
         db.commit()
-        return {"ok": True, "rows": rows, "delimiter_used": eff_delim}
+
+        return {"ok": True, "rows": len(rows_list), "delimiter_used": eff_delim}
 
     except HTTPException:
         db.rollback()

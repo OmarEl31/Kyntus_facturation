@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { X, Upload } from "lucide-react";
-import { uploadOrangePpd, uploadPraxedo, uploadPidi } from "@/services/dossiersApi";
+import { uploadOrangePpd, uploadPraxedo, uploadPidi, uploadPraxedoCr10 } from "@/services/dossiersApi";
+
 type Props = {
-  type: "PRAXEDO" | "PIDI" | "ORANGE_PPD";
+  type: "PRAXEDO" | "PIDI" | "ORANGE_PPD" | "PRAXEDO_CR10";
   onImported: (payload?: { importId?: string }) => void;
   onClose: () => void;
 };
@@ -14,7 +15,6 @@ export default function FileUploadModal({ type, onImported, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ message: string; count: number; import_id?: string } | null>(null);
-
 
   async function handleUpload() {
     if (!file) {
@@ -27,12 +27,19 @@ export default function FileUploadModal({ type, onImported, onClose }: Props) {
     setResult(null);
 
     try {
-const res =
-        type === "PRAXEDO"
-          ? await uploadPraxedo(file)
-          : type === "PIDI"
-          ? await uploadPidi(file)
-          : await uploadOrangePpd(file);      setResult(res);
+      let res;
+      // ✅ CORRECT: Tous les cas sont gérés
+      if (type === "PRAXEDO") {
+        res = await uploadPraxedo(file);
+      } else if (type === "PIDI") {
+        res = await uploadPidi(file);
+      } else if (type === "PRAXEDO_CR10") {
+        res = await uploadPraxedoCr10(file);
+      } else {
+        res = await uploadOrangePpd(file);
+      }
+      
+      setResult(res);
       onImported({ importId: res.import_id });
     } catch (e: any) {
       setError(e?.message || "Erreur lors de l'import du fichier.");
@@ -72,7 +79,7 @@ const res =
             {result && (
               <div className="rounded border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
                 ✅ {result.message} — {result.count} lignes importées
-                                {result.import_id ? <div className="mt-1 font-mono text-xs">Import ID: {result.import_id}</div> : null}
+                {result.import_id ? <div className="mt-1 font-mono text-xs">Import ID: {result.import_id}</div> : null}
               </div>
             )}
           </div>

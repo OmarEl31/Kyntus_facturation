@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { RefreshCw, Upload, Download, X, ChevronRight, Info, Layers } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { RefreshCw, Upload, Download, X, ChevronRight, Info, Layers, ChevronDown } from "lucide-react";
 
 import {
   compareOrangePpd,
@@ -99,12 +99,10 @@ function Chip({ txt }: { txt: string }) {
 
 // ─── Helpers montants Orange ───────────────────────────────────────────────
 
-// MODIFIER cette fonction pour gérer correctement les couleurs selon la valeur
 function amountPillClass(kind: "orange" | "kyntus" | "diff", value?: number | null) {
   if (kind === "orange") return "bg-orange-100 text-orange-900 border border-orange-300";
   if (kind === "kyntus") return "bg-blue-50 text-blue-800 border border-blue-200";
   
-  // Pour "diff" : vert si >= 0, rouge si < 0
   if (kind === "diff") {
     const numValue = Number(value ?? 0);
     if (numValue >= 0) return "bg-green-100 text-green-800 border border-green-300";
@@ -166,7 +164,6 @@ function motifKind(m?: string | null): BadgeKind {
   if (x === "REGLE_MANQUANTE") return "orange";
   if (x === "ACTPROD_MANQUANT") return "orange";
   if (x === "CLOTURE_INVALIDE") return "orange";
-
   if (x === "PREVISITE") return "slate";
   if (x === "NON_FACTURABLE_REGLE") return "slate";
 
@@ -228,6 +225,58 @@ function parseAnyList(v?: string | null): string[] {
     .filter(Boolean);
 }
 
+// ✅ Version améliorée de l'extraction du commentaire
+function _extractCommentaireReleve(compte_rendu: string | null): string | null {
+  if (!compte_rendu) return null;
+  
+  const s = String(compte_rendu).trim();
+  
+  // Chercher plusieurs formats possibles
+  const patterns = [
+    /#commentairereleve\s*=\s*(.+?)(?=#|$)/i,  // Format avec # et = 
+    /commentairereleve[:\s]+(.+?)(?=#|$)/i,    // Format avec : ou espace
+    /#commentaire\s*=\s*(.+?)(?=#|$)/i,        // Variante sans "releve"
+    /commentaire\s*technique[:\s]+(.+?)(?=#|$)/i // "commentaire technique"
+  ];
+  
+  for (const pattern of patterns) {
+    const m = s.match(pattern);
+    if (m) {
+      const val = m[1].trim();
+      if (val) return val;
+    }
+  }
+  
+  // Si pas trouvé avec les patterns, chercher après le dernier #
+  const lastHashIndex = s.lastIndexOf('#');
+  if (lastHashIndex !== -1 && lastHashIndex < s.length - 1) {
+    const afterLastHash = s.substring(lastHashIndex + 1).trim();
+    if (afterLastHash && afterLastHash.length < 200) {
+      return afterLastHash;
+    }
+  }
+  
+  return null;
+}
+
+function parseCommentaireReleve(compteRendu?: string | null): {
+  aChangeArticle: boolean;
+  commentaire: string | null;
+} {
+  if (!compteRendu) return { aChangeArticle: false, commentaire: null };
+  
+  const commentaireReleve = _extractCommentaireReleve(compteRendu);
+  
+  const aChangeArticle = commentaireReleve 
+    ? /change(?:ment)?\s+d['']?article|remplacement|article\s+change|modif(?:ication)?\s+article/i.test(commentaireReleve)
+    : false;
+  
+  return {
+    aChangeArticle,
+    commentaire: commentaireReleve
+  };
+}
+
 function parsePidiBrutCodes(v?: string | null): string[] {
   if (!v) return [];
   const s = String(v).toUpperCase();
@@ -265,11 +314,9 @@ function groupByPpd(items: DossierFacturable[]) {
 
   for (const d of items) {
     const hasPidi = !!d.statut_pidi;
-
     let key: string;
     if (!hasPidi) key = "— (sans PIDI)";
     else key = (d.numero_ppd ?? "").trim() || "SANS_PPD";
-
     if (!m.has(key)) m.set(key, []);
     m.get(key)!.push(d);
   }
@@ -345,7 +392,6 @@ function reasonLabel(r: string) {
 
 function orangeRowClass(r: OrangePpdComparison & { reason?: string }) {
   const reason = (r.reason || "").toUpperCase();
-
   if (reason === "RELEVE_ABSENT_PIDI") {
     return "bg-red-50/40 hover:bg-red-100/50";
   }
@@ -398,6 +444,7 @@ export default function DossiersList() {
   const [orangePpdOptions, setOrangePpdOptions] = useState<string[]>([]);
   const [selectedOrangePpd, setSelectedOrangePpd] = useState<string>("");
   const [onlyOrangeMismatch, setOnlyOrangeMismatch] = useState(false);
+  const [expandedOrangeRows, setExpandedOrangeRows] = useState<Set<string>>(new Set());
 
   // Filtres tableau Orange
   const [orangeStatus, setOrangeStatus] = useState<"ALL" | "OK" | "A_VERIFIER">("ALL");
@@ -475,6 +522,7 @@ export default function DossiersList() {
         setOrangePpdOptions(ppds);
         setOrangeSummary(summary);
         setOrangePage(1);
+        setExpandedOrangeRows(new Set());
         setOrangeStatus("ALL");
         setOrangeCroisementFilter("ALL");
         setOrangeOtSearch("");
@@ -501,7 +549,7 @@ export default function DossiersList() {
     return Array.from(statuses).sort();
   }, [orangeRows]);
 
-  // --- Orange filtered + paginated + enrichi avec reason et statuts ---
+  // ✅ Filtrage amélioré pour OT et ND
   const orangeRowsFiltered = useMemo(() => {
     const enrichedRows = orangeRows.map((row) => {
       const ndList = normalizeNds(row.nds);
@@ -509,11 +557,9 @@ export default function DossiersList() {
         row.facturation_kyntus_ht !== null && row.facturation_kyntus_ht !== undefined;
 
       const reason = (() => {
-        // si le backend renvoie "reason", on le respecte
         const backendReason = row.reason;
         if (backendReason) return String(backendReason).toUpperCase();
 
-        // fallback
         if (!hasKyntus) return "OT_INEXISTANT";
         if (row.statut_croisement !== "OK") return "CROISEMENT_INCOMPLET";
         if (
@@ -551,23 +597,24 @@ export default function DossiersList() {
       rows = rows.filter((r) => r.statut_croisement === orangeCroisementFilter);
     }
 
-    // Filtre OT (num_ot)
+    // ✅ Filtre OT amélioré - recherche dans num_ot
     if (orangeOtSearch.trim() !== "") {
       const searchTerm = orangeOtSearch.trim().toLowerCase();
-      rows = rows.filter((r) =>
-        String(r.num_ot || "").toLowerCase().includes(searchTerm)
-      );
+      rows = rows.filter((r) => {
+        const ot = String(r.num_ot || "").toLowerCase();
+        return ot.includes(searchTerm);
+      });
     }
 
-    // Filtre ND
+    // ✅ Filtre ND amélioré - recherche dans tous les ND
     if (orangeNdSearch.trim() !== "") {
       const ndNeedle = orangeNdSearch.trim().toLowerCase();
-      rows = rows.filter((r) =>
-        (r.nds as string[]).some((nd: string) => nd.toLowerCase().includes(ndNeedle))
-      );
+      rows = rows.filter((r) => {
+        const nds = r.nds as string[];
+        return nds.some((nd: string) => nd.toLowerCase().includes(ndNeedle));
+      });
     }
 
-    // Tri : non-OK en premier, puis par num_ot
     return [...rows].sort((a, b) => {
       const aBad = a.reason !== "OK";
       const bBad = b.reason !== "OK";
@@ -635,6 +682,19 @@ export default function DossiersList() {
       setExportingOrange(false);
     }
   }, [orangeRowsFiltered, selectedOrangeImportId, orangeImports]);
+
+  // toggle expand pour les lignes Orange avec plusieurs ND
+  const toggleOrangeRow = (rowId: string) => {
+    setExpandedOrangeRows(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(rowId)) {
+        newSet.delete(rowId);
+      } else {
+        newSet.add(rowId);
+      }
+      return newSet;
+    });
+  };
 
   // escape drawer
   useEffect(() => {
@@ -820,6 +880,14 @@ export default function DossiersList() {
           </button>
 
           <button
+            onClick={() => setImportType("PRAXEDO_CR10")}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50"
+          >
+            <Upload className="h-4 w-4" />
+            Praxedo CR10
+          </button>
+
+          <button
             onClick={() => setImportType("PIDI")}
             className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50"
           >
@@ -833,14 +901,6 @@ export default function DossiersList() {
           >
             <Upload className="h-4 w-4" />
             Orange PPD
-          </button>
-
-          <button
-            onClick={() => setImportType("PRAXEDO_CR10")}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50"
-          >
-            <Upload className="h-4 w-4" />
-            Commentaire tech (CR10)
           </button>
 
           <button
@@ -994,7 +1054,6 @@ export default function DossiersList() {
           <div className="flex flex-wrap items-center gap-3 mt-2 p-3 bg-gray-50 rounded-lg border">
             <div className="text-xs font-medium text-gray-700 mr-1">Filtres tableau :</div>
 
-            {/* Filtre statut OK / à vérifier */}
             <select
               className="border rounded px-2 py-2 text-sm min-w-[140px]"
               value={orangeStatus}
@@ -1008,7 +1067,6 @@ export default function DossiersList() {
               <option value="A_VERIFIER">À vérifier uniquement</option>
             </select>
 
-            {/* Filtre croisement */}
             <select
               className="border rounded px-2 py-2 text-sm min-w-[180px]"
               value={orangeCroisementFilter}
@@ -1025,7 +1083,6 @@ export default function DossiersList() {
               ))}
             </select>
 
-            {/* Recherche OT */}
             <div className="flex items-center gap-1">
               <input
                 type="text"
@@ -1051,7 +1108,6 @@ export default function DossiersList() {
               )}
             </div>
 
-            {/* Recherche ND */}
             <div className="flex items-center gap-1">
               <input
                 type="text"
@@ -1163,12 +1219,13 @@ export default function DossiersList() {
             />
           </div>
 
-          {/* Table Orange */}
+          {/* ✅ Table Orange avec lignes expansibles */}
           {orangeRowsFiltered.length > 0 && (
             <div className="overflow-x-auto border rounded mt-4">
               <table className="min-w-[2000px] w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr className="text-left">
+                    <th className="p-3 text-sm font-semibold w-8"></th>
                     <th className="p-3 text-sm font-semibold">OT (CAC)</th>
                     <th className="p-3 text-sm font-semibold">Relevé / ND</th>
                     <th className="p-3 text-sm font-semibold">Raison</th>
@@ -1185,97 +1242,64 @@ export default function DossiersList() {
                   {orangeRowsPage.map((r) => {
                     const ndList = normalizeNds(r.nds);
                     const hasMultipleNds = ndList.length > 1;
+                    const rowId = `${r.num_ot}__${r.releve ?? ""}`;
+                    const isExpanded = expandedOrangeRows.has(rowId);
                     
-                    // Si pas de ND ou un seul ND, afficher une seule ligne
-                    if (ndList.length === 0) {
-                      return (
+                    return (
+                      <React.Fragment key={rowId}>
+                        {/* Ligne principale */}
                         <tr
-                          key={`${r.num_ot}__${r.releve ?? ""}__single`}
-                          className={`border-t transition-colors ${orangeRowClass(r)}`}
+                          className={`border-t transition-colors cursor-pointer ${orangeRowClass(r)}`}
+                          onClick={() => hasMultipleNds && toggleOrangeRow(rowId)}
                         >
+                          <td className="p-3 align-top">
+                            {hasMultipleNds && (
+                              <button className="text-gray-500 hover:text-gray-700">
+                                {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              </button>
+                            )}
+                          </td>
                           <td className="p-3 font-mono font-medium align-top">{r.num_ot || "—"}</td>
                           <td className="p-3 align-top">
                             <div className="font-mono">{r.releve ? String(r.releve) : "—"}</div>
-                            <div className="text-xs text-gray-400 mt-1">—</div>
-                          </td>
-                          <td className="p-3 align-top">
-                            <Badge txt={reasonLabel(r.reason ?? "")} kind={orangeReasonBadgeKind(r)} />
-                          </td>
-                          <td className="p-3 align-top">
-                            <AmountPill v={r.facturation_orange_ht} kind="orange" />
-                          </td>
-                          <td className="p-3 align-top">
-                            <AmountPill v={r.facturation_kyntus_ht} kind="kyntus" />
-                          </td>
-                          <td className="p-3 align-top">
-                            <AmountPill v={r.diff_ht} kind="diff" />
-                          </td>
-                          <td className="p-3 align-top">
-                            <AmountPill v={r.facturation_orange_ttc} kind="orange" />
-                          </td>
-                          <td className="p-3 align-top">
-                            <AmountPill v={r.facturation_kyntus_ttc} kind="kyntus" />
-                          </td>
-                          <td className="p-3 align-top">
-                            <AmountPill v={r.diff_ttc} kind="diff" />
-                          </td>
-                        </tr>
-                      );
-                    }
-                    
-                    // Première ligne avec le relevé et le premier ND
-                    return (
-                      <>
-                        <tr
-                          key={`${r.num_ot}__${r.releve ?? ""}__0`}
-                          className={`border-t transition-colors ${orangeRowClass(r)}`}
-                        >
-                          <td className="p-3 font-mono font-medium align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                            {r.num_ot || "—"}
-                          </td>
-                          <td className="p-3 align-top">
-                            <div className="font-mono">{r.releve ? String(r.releve) : "—"}</div>
-                            <div className="text-xs font-mono text-gray-600 mt-1 bg-gray-50 px-2 py-0.5 rounded inline-block">
-                              {ndList[0]}
-                            </div>
-                          </td>
-                          <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                            <Badge txt={reasonLabel(r.reason ?? "")} kind={orangeReasonBadgeKind(r)} />
-                          </td>
-                          <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                            <AmountPill v={r.facturation_orange_ht} kind="orange" />
-                          </td>
-                          <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                            <AmountPill v={r.facturation_kyntus_ht} kind="kyntus" />
-                          </td>
-                          <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                            <AmountPill v={r.diff_ht} kind="diff" />
-                          </td>
-                          <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                            <AmountPill v={r.facturation_orange_ttc} kind="orange" />
-                          </td>
-                          <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                            <AmountPill v={r.facturation_kyntus_ttc} kind="kyntus" />
-                          </td>
-                          <td className="p-3 align-top" rowSpan={hasMultipleNds ? ndList.length : 1}>
-                            <AmountPill v={r.diff_ttc} kind="diff" />
-                          </td>
-                        </tr>
-                        
-                        {/* Lignes supplémentaires pour les ND suivants */}
-                        {ndList.slice(1).map((nd, idx) => (
-                          <tr
-                            key={`${r.num_ot}__${r.releve ?? ""}__${idx + 1}`}
-                            className={`transition-colors ${orangeRowClass(r)}`}
-                          >
-                            <td className="p-3 align-top">
-                              <div className="text-xs font-mono text-gray-600 bg-gray-50 px-2 py-0.5 rounded inline-block ml-4">
-                                {nd}
+                            {!isExpanded && hasMultipleNds && (
+                              <div className="text-xs font-mono text-gray-500 mt-1">
+                                {ndList.length} ND • {ndList[0]}{ndList.length > 1 ? "..." : ""}
                               </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </>
+                            )}
+                            {isExpanded && (
+                              <div className="mt-2 space-y-1">
+                                {ndList.map((nd, idx) => (
+                                  <div key={idx} className="text-xs font-mono text-gray-600 bg-gray-50 px-2 py-1 rounded">
+                                    {nd}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                          <td className="p-3 align-top">
+                            <Badge txt={reasonLabel(r.reason ?? "")} kind={orangeReasonBadgeKind(r)} />
+                          </td>
+                          <td className="p-3 align-top">
+                            <AmountPill v={r.facturation_orange_ht} kind="orange" />
+                          </td>
+                          <td className="p-3 align-top">
+                            <AmountPill v={r.facturation_kyntus_ht} kind="kyntus" />
+                          </td>
+                          <td className="p-3 align-top">
+                            <AmountPill v={r.diff_ht} kind="diff" />
+                          </td>
+                          <td className="p-3 align-top">
+                            <AmountPill v={r.facturation_orange_ttc} kind="orange" />
+                          </td>
+                          <td className="p-3 align-top">
+                            <AmountPill v={r.facturation_kyntus_ttc} kind="kyntus" />
+                          </td>
+                          <td className="p-3 align-top">
+                            <AmountPill v={r.diff_ttc} kind="diff" />
+                          </td>
+                        </tr>
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -1568,7 +1592,7 @@ export default function DossiersList() {
       )}
 
       {/* ═══════════════════════════════════════════════
-          DRAWER
+          DRAWER avec commentaire technique
       ══════════════════════════════════════════════════ */}
       {drawerOpen && selected && (
         <div className="fixed inset-0 z-50">
@@ -1658,70 +1682,127 @@ export default function DossiersList() {
                 </div>
               </div>
 
-              <div className="rounded-lg border bg-white p-4 space-y-3">
-                <SectionTitle
-                  title="Terrain (PBO / passage)"
-                  right={
-                    <button
-                      className="text-xs text-blue-700 hover:underline"
-                      onClick={() => setShowRawTerrain((x) => !x)}
-                    >
-                      {showRawTerrain ? "Masquer texte source" : "Voir texte source"}
-                    </button>
-                  }
-                />
+{/* ✅ Section Terrain avec commentaire technique - VERSION DYNAMIQUE */}
+<div className="rounded-lg border bg-white p-4 space-y-3">
+  <SectionTitle
+    title="Terrain (PBO / passage)"
+    right={
+      <button
+        className="text-xs text-blue-700 hover:underline"
+        onClick={() => setShowRawTerrain((x) => !x)}
+      >
+        {showRawTerrain ? "Masquer texte source" : "Voir texte source"}
+      </button>
+    }
+  />
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-lg border bg-gray-50 p-3">
-                    <div className="text-xs text-gray-500 mb-1">Mode passage</div>
-                    <div className="text-sm font-medium">
-                      {selected.mode_passage ? (
-                        <Badge txt={selected.mode_passage} kind={terrainKind(selected.mode_passage)} />
-                      ) : (
-                        <span className="text-gray-500">—</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="rounded-lg border bg-gray-50 p-3">
-                    <div className="text-xs text-gray-500 mb-1">Type site</div>
-                    <div className="text-sm font-medium">{selected.type_site_terrain ?? "—"}</div>
-                  </div>
-                  <div className="rounded-lg border bg-gray-50 p-3 col-span-2">
-                    <div className="text-xs text-gray-500 mb-1">Type PBO</div>
-                    <div className="text-sm font-medium">{selected.type_pbo_terrain ?? "—"}</div>
-                  </div>
-                </div>
-
-                <div className="pt-2">
-                  <div className="text-xs text-gray-500 mb-2">Articles terrain proposés</div>
-                  {selectedTerrainArticles.length ? (
-                    <div className="flex flex-wrap gap-1">
-                      {selectedTerrainArticles.map((a) => (
-                        <Chip key={a} txt={a} />
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-sm text-gray-500">—</div>
-                  )}
-                </div>
-
-                {showRawTerrain && (
-                  <div className="space-y-2">
-                    <div className="rounded border bg-gray-50 p-3">
-                      <div className="text-xs text-gray-500 mb-1">desc_site (source)</div>
-                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">
-                        {selected.desc_site ?? "—"}
-                      </pre>
-                    </div>
-                    <div className="rounded border bg-gray-50 p-3">
-                      <div className="text-xs text-gray-500 mb-1">description (source)</div>
-                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800">
-                        {selected.description ?? "—"}
-                      </pre>
-                    </div>
-                  </div>
-                )}
+  {/* ✅ Commentaire technique extrait de la description ou du compte_rendu */}
+  <div className="space-y-2 pt-2 border-b border-gray-100 pb-3">
+    <div className="text-xs font-medium text-gray-700">Commentaire technique</div>
+    
+    {(() => {
+      // Chercher d'abord dans description
+      const description = selected?.description || '';
+      const compteRendu = selected?.compte_rendu || '';
+      
+      // Extraire le bloc-note de la description
+      let commentaire = null;
+      
+      // Chercher dans description
+      const blocNoteMatch = description.match(/Bloc-note:\s*(.+?)(?:\n|$)/i);
+      if (blocNoteMatch && blocNoteMatch[1]) {
+        commentaire = blocNoteMatch[1].trim();
+      }
+      
+      // Si pas trouvé, chercher dans compte_rendu
+      if (!commentaire && compteRendu) {
+        const crMatch = compteRendu.match(/#commentairereleve\s*=\s*([^#]+)/i);
+        if (crMatch && crMatch[1]) {
+          commentaire = crMatch[1].trim();
+        }
+      }
+      
+      // Détections
+      const aPlp = commentaire ? commentaire.toLowerCase().includes('plp') : false;
+      const aPto = commentaire ? commentaire.toLowerCase().includes('pto') : false;
+      const aMutation = commentaire ? /muter?|mutation/i.test(commentaire) : false;
+      
+      return (
+        <>
+          {commentaire ? (
+            <div className="rounded border bg-gray-50 p-3">
+              <div className="text-xs text-gray-600 break-words whitespace-pre-wrap">
+                "{commentaire}"
               </div>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {aPlp && <Badge txt="PLP détecté" kind="orange" />}
+                {aPto && <Badge txt="PTO mentionné" kind="blue" />}
+                {aMutation && <Badge txt="Mutation" kind="purple" />}
+              </div>
+            </div>
+          ) : (
+            <div className="text-xs text-gray-400 italic">
+              Aucun commentaire technique trouvé
+            </div>
+          )}
+        </>
+      );
+    })()}
+  </div>
+
+  <div className="grid grid-cols-2 gap-3">
+    <div className="rounded-lg border bg-gray-50 p-3">
+      <div className="text-xs text-gray-500 mb-1">Mode passage</div>
+      <div className="text-sm font-medium">
+        {selected?.mode_passage ? (
+          <Badge txt={selected.mode_passage} kind={terrainKind(selected.mode_passage)} />
+        ) : (
+          <span className="text-gray-500">—</span>
+        )}
+      </div>
+    </div>
+    <div className="rounded-lg border bg-gray-50 p-3">
+      <div className="text-xs text-gray-500 mb-1">Type site</div>
+      <div className="text-sm font-medium">{selected?.type_site_terrain || "—"}</div>
+    </div>
+  </div>
+
+  <div className="pt-2">
+    <div className="text-xs text-gray-500 mb-2">Articles terrain proposés</div>
+    {selectedTerrainArticles.length ? (
+      <div className="flex flex-wrap gap-1">
+        {selectedTerrainArticles.map((a) => (
+          <Chip key={a} txt={a} />
+        ))}
+      </div>
+    ) : (
+      <div className="text-sm text-gray-500">—</div>
+    )}
+  </div>
+
+  {showRawTerrain && (
+    <div className="space-y-2">
+      <div className="rounded border bg-gray-50 p-3">
+        <div className="text-xs text-gray-500 mb-1">desc_site (source)</div>
+        <pre className="whitespace-pre-wrap break-words text-xs text-gray-800 max-h-40 overflow-auto">
+          {selected?.desc_site || "—"}
+        </pre>
+      </div>
+      <div className="rounded border bg-gray-50 p-3">
+        <div className="text-xs text-gray-500 mb-1">description (source)</div>
+        <pre className="whitespace-pre-wrap break-words text-xs text-gray-800 max-h-60 overflow-auto">
+          {selected?.description || "—"}
+        </pre>
+      </div>
+      <div className="rounded border bg-gray-50 p-3">
+        <div className="text-xs text-gray-500 mb-1">compte_rendu (source)</div>
+        <pre className="whitespace-pre-wrap break-words text-xs text-gray-800 max-h-60 overflow-auto">
+          {selected?.compte_rendu || "—"}
+        </pre>
+      </div>
+    </div>
+  )}
+</div>
 
               <div className="rounded-lg border bg-white p-4 space-y-3">
                 <SectionTitle title="Règle appliquée" />

@@ -182,14 +182,32 @@ export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvRes
       ? `${API_URL}/api/import/praxedo-cr10`
       : `${API_URL}/api/orange-ppd/import`;
 
-  const response = await fetch(endpoint, { method: "POST", body: formData, signal });
+  console.log(`📤 Import CSV - Type: ${type}, Endpoint: ${endpoint}`);
+  console.log(`📄 Fichier: ${file.name}, Taille: ${file.size} bytes, Délimiteur: ${delimiter}`);
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Erreur ${response.status}: ${errorText}`);
+  try {
+    const response = await fetch(endpoint, { method: "POST", body: formData, signal });
+
+    if (!response.ok) {
+      let errorDetail = "";
+      try {
+        const errorJson = await response.json();
+        errorDetail = JSON.stringify(errorJson, null, 2);
+      } catch {
+        errorDetail = await response.text();
+      }
+      
+      console.error(`❌ Erreur ${response.status}:`, errorDetail);
+      throw new Error(`Erreur ${response.status}: ${errorDetail}`);
+    }
+
+    const result = await response.json();
+    console.log(`✅ Import réussi:`, result);
+    return result;
+  } catch (error) {
+    console.error(`❌ Exception:`, error);
+    throw error;
   }
-
-  return response.json();
 }
 
 export const uploadPraxedo = (file: File) => importCsv({ type: "PRAXEDO", file });
