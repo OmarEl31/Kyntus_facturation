@@ -1,7 +1,9 @@
+//frontend/components/dossiers/dossiers-list.tsx
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { RefreshCw, Upload, Download, X, ChevronRight, Info, Layers, ChevronDown } from "lucide-react";
+import { RefreshCw, Upload, Download, X, ChevronRight, Info, Layers, ChevronDown, Sparkles } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 import {
   compareOrangePpd,
@@ -413,6 +415,8 @@ function orangeReasonBadgeKind(r: OrangePpdComparison & { reason?: string }): Ba
 // ──────────────────────────────────────────────────────────────────────────
 
 export default function DossiersList() {
+  const router = useRouter(); // 👈 Router pour la navigation vers scraper
+
   // --- affichage des sections ---
   const [showOrangeSection, setShowOrangeSection] = useState(false);
   const [showDossiersSection, setShowDossiersSection] = useState(true);
@@ -623,6 +627,29 @@ export default function DossiersList() {
       return String(a.num_ot || "").localeCompare(String(b.num_ot || ""));
     });
   }, [orangeRows, orangeStatus, orangeCroisementFilter, orangeOtSearch, orangeNdSearch]);
+
+  // 👉 Fonction pour scraper les relevés manquants
+  const handleScrapeMissing = () => {
+    // Récupérer tous les relevés ou OTs manquants
+    const missing = orangeRowsFiltered
+      .filter((r) => r.reason === "RELEVE_ABSENT_PIDI" || r.reason === "OT_INEXISTANT" || r.reason === "CROISEMENT_INCOMPLET")
+      .map((r) => r.releve || r.num_ot) // On préfère le relevé, sinon num_ot
+      .filter(Boolean);
+
+    // Enlever les doublons
+    const uniqueMissing = Array.from(new Set(missing));
+
+    if (uniqueMissing.length === 0) {
+      alert("✅ Aucun relevé manquant à scraper ! Tout est bon.");
+      return;
+    }
+
+    // Sauvegarder dans sessionStorage
+    sessionStorage.setItem("kyntus_missing_releves", uniqueMissing.join("\n"));
+    
+    // Rediriger vers la page scraper
+    router.push("/scraper");
+  };
 
   // --------- EXPORT ORANGE EXCEL ----------
   const exportOrangeExcel = useCallback(async () => {
@@ -836,7 +863,7 @@ export default function DossiersList() {
         <div className="text-sm text-gray-600">{loading ? "Chargement…" : `${items.length} dossiers`}</div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <label className="inline-flex items-center gap-2 text-sm border rounded px-3 py-2 bg-white">
+          <label className="inline-flex items-center gap-2 text-sm border rounded px-3 py-2 bg-white cursor-pointer hover:bg-gray-50">
             <input
               type="checkbox"
               checked={showDossiersSection}
@@ -844,7 +871,7 @@ export default function DossiersList() {
             />
             Afficher Dossiers
           </label>
-          <label className="inline-flex items-center gap-2 text-sm border rounded px-3 py-2 bg-white">
+          <label className="inline-flex items-center gap-2 text-sm border rounded px-3 py-2 bg-white cursor-pointer hover:bg-gray-50">
             <input
               type="checkbox"
               checked={showOrangeSection}
@@ -977,6 +1004,17 @@ export default function DossiersList() {
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Bouton Scraper les manquants */}
+              <button
+                onClick={handleScrapeMissing}
+                disabled={orangeRowsFiltered.length === 0}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-60 text-sm font-medium shadow-sm transition-colors"
+                title="Extraire les relevés manquants depuis Praxedo"
+              >
+                <Sparkles className="h-4 w-4" />
+                Scraper les manquants
+              </button>
+
               <button
                 onClick={exportOrangeExcel}
                 disabled={exportingOrange || orangeRowsFiltered.length === 0}
@@ -1682,127 +1720,131 @@ export default function DossiersList() {
                 </div>
               </div>
 
-{/* ✅ Section Terrain avec commentaire technique - VERSION DYNAMIQUE */}
-<div className="rounded-lg border bg-white p-4 space-y-3">
-  <SectionTitle
-    title="Terrain (PBO / passage)"
-    right={
-      <button
-        className="text-xs text-blue-700 hover:underline"
-        onClick={() => setShowRawTerrain((x) => !x)}
-      >
-        {showRawTerrain ? "Masquer texte source" : "Voir texte source"}
-      </button>
-    }
-  />
+              {/* ✅ Section Terrain avec commentaire technique - VERSION DYNAMIQUE */}
+              <div className="rounded-lg border bg-white p-4 space-y-3">
+                <SectionTitle
+                  title="Terrain (PBO / passage)"
+                  right={
+                    <button
+                      className="text-xs text-blue-700 hover:underline"
+                      onClick={() => setShowRawTerrain((x) => !x)}
+                    >
+                      {showRawTerrain ? "Masquer texte source" : "Voir texte source"}
+                    </button>
+                  }
+                />
 
-  {/* ✅ Commentaire technique extrait de la description ou du compte_rendu */}
-  <div className="space-y-2 pt-2 border-b border-gray-100 pb-3">
-    <div className="text-xs font-medium text-gray-700">Commentaire technique</div>
-    
-    {(() => {
-      // Chercher d'abord dans description
-      const description = selected?.description || '';
-      const compteRendu = selected?.compte_rendu || '';
-      
-      // Extraire le bloc-note de la description
-      let commentaire = null;
-      
-      // Chercher dans description
-      const blocNoteMatch = description.match(/Bloc-note:\s*(.+?)(?:\n|$)/i);
-      if (blocNoteMatch && blocNoteMatch[1]) {
-        commentaire = blocNoteMatch[1].trim();
-      }
-      
-      // Si pas trouvé, chercher dans compte_rendu
-      if (!commentaire && compteRendu) {
-        const crMatch = compteRendu.match(/#commentairereleve\s*=\s*([^#]+)/i);
-        if (crMatch && crMatch[1]) {
-          commentaire = crMatch[1].trim();
-        }
-      }
-      
-      // Détections
-      const aPlp = commentaire ? commentaire.toLowerCase().includes('plp') : false;
-      const aPto = commentaire ? commentaire.toLowerCase().includes('pto') : false;
-      const aMutation = commentaire ? /muter?|mutation/i.test(commentaire) : false;
-      
-      return (
-        <>
-          {commentaire ? (
-            <div className="rounded border bg-gray-50 p-3">
-              <div className="text-xs text-gray-600 break-words whitespace-pre-wrap">
-                "{commentaire}"
+                {/* ✅ Commentaire technique extrait de la description ou du compte_rendu */}
+                <div className="space-y-2 pt-2 border-b border-gray-100 pb-3">
+                  <div className="text-xs font-medium text-gray-700">Commentaire technique</div>
+                  
+                  {(() => {
+                    // Chercher d'abord dans description
+                    const description = selected?.description || '';
+                    const compteRendu = selected?.compte_rendu || '';
+                    
+                    // Extraire le bloc-note de la description
+                    let commentaire = null;
+                    
+                    // Chercher dans description
+                    const blocNoteMatch = description.match(/Bloc-note:\s*(.+?)(?:\n|$)/i);
+                    if (blocNoteMatch && blocNoteMatch[1]) {
+                      commentaire = blocNoteMatch[1].trim();
+                    }
+                    
+                    // Si pas trouvé, chercher dans compte_rendu
+                    if (!commentaire && compteRendu) {
+                      const crMatch = compteRendu.match(/#commentairereleve\s*=\s*([^#]+)/i);
+                      if (crMatch && crMatch[1]) {
+                        commentaire = crMatch[1].trim();
+                      }
+                    }
+                    
+                    // Détections
+                    const aPlp = commentaire ? commentaire.toLowerCase().includes('plp') : false;
+                    const aPto = commentaire ? commentaire.toLowerCase().includes('pto') : false;
+                    const aMutation = commentaire ? /muter?|mutation/i.test(commentaire) : false;
+                    
+                    return (
+                      <>
+                        {commentaire ? (
+                          <div className="rounded border bg-gray-50 p-3">
+                            <div className="text-xs text-gray-600 break-words whitespace-pre-wrap">
+                              "{commentaire}"
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              {aPlp && <Badge txt="PLP détecté" kind="orange" />}
+                              {aPto && <Badge txt="PTO mentionné" kind="blue" />}
+                              {aMutation && <Badge txt="Mutation" kind="purple" />}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-400 italic">
+                            Aucun commentaire technique trouvé
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border bg-gray-50 p-3">
+                    <div className="text-xs text-gray-500 mb-1">Mode passage</div>
+                    <div className="text-sm font-medium">
+                      {selected?.mode_passage ? (
+                        <Badge txt={selected.mode_passage} kind={terrainKind(selected.mode_passage)} />
+                      ) : (
+                        <span className="text-gray-500">—</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border bg-gray-50 p-3">
+                    <div className="text-xs text-gray-500 mb-1">Type site</div>
+                    <div className="text-sm font-medium">{selected?.type_site_terrain || "—"}</div>
+                  </div>
+                  <div className="rounded-lg border bg-gray-50 p-3 col-span-2">
+                    <div className="text-xs text-gray-500 mb-1">Type PBO</div>
+                    <div className="text-sm font-medium">{selected?.type_pbo_terrain ?? "—"}</div>
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <div className="text-xs text-gray-500 mb-2">Articles terrain proposés</div>
+                  {selectedTerrainArticles.length ? (
+                    <div className="flex flex-wrap gap-1">
+                      {selectedTerrainArticles.map((a) => (
+                        <Chip key={a} txt={a} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-500">—</div>
+                  )}
+                </div>
+
+                {showRawTerrain && (
+                  <div className="space-y-2">
+                    <div className="rounded border bg-gray-50 p-3">
+                      <div className="text-xs text-gray-500 mb-1">desc_site (source)</div>
+                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800 max-h-40 overflow-auto">
+                        {selected?.desc_site || "—"}
+                      </pre>
+                    </div>
+                    <div className="rounded border bg-gray-50 p-3">
+                      <div className="text-xs text-gray-500 mb-1">description (source)</div>
+                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800 max-h-60 overflow-auto">
+                        {selected?.description || "—"}
+                      </pre>
+                    </div>
+                    <div className="rounded border bg-gray-50 p-3">
+                      <div className="text-xs text-gray-500 mb-1">compte_rendu (source)</div>
+                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800 max-h-60 overflow-auto">
+                        {selected?.compte_rendu || "—"}
+                      </pre>
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="mt-2 flex flex-wrap gap-1">
-                {aPlp && <Badge txt="PLP détecté" kind="orange" />}
-                {aPto && <Badge txt="PTO mentionné" kind="blue" />}
-                {aMutation && <Badge txt="Mutation" kind="purple" />}
-              </div>
-            </div>
-          ) : (
-            <div className="text-xs text-gray-400 italic">
-              Aucun commentaire technique trouvé
-            </div>
-          )}
-        </>
-      );
-    })()}
-  </div>
-
-  <div className="grid grid-cols-2 gap-3">
-    <div className="rounded-lg border bg-gray-50 p-3">
-      <div className="text-xs text-gray-500 mb-1">Mode passage</div>
-      <div className="text-sm font-medium">
-        {selected?.mode_passage ? (
-          <Badge txt={selected.mode_passage} kind={terrainKind(selected.mode_passage)} />
-        ) : (
-          <span className="text-gray-500">—</span>
-        )}
-      </div>
-    </div>
-    <div className="rounded-lg border bg-gray-50 p-3">
-      <div className="text-xs text-gray-500 mb-1">Type site</div>
-      <div className="text-sm font-medium">{selected?.type_site_terrain || "—"}</div>
-    </div>
-  </div>
-
-  <div className="pt-2">
-    <div className="text-xs text-gray-500 mb-2">Articles terrain proposés</div>
-    {selectedTerrainArticles.length ? (
-      <div className="flex flex-wrap gap-1">
-        {selectedTerrainArticles.map((a) => (
-          <Chip key={a} txt={a} />
-        ))}
-      </div>
-    ) : (
-      <div className="text-sm text-gray-500">—</div>
-    )}
-  </div>
-
-  {showRawTerrain && (
-    <div className="space-y-2">
-      <div className="rounded border bg-gray-50 p-3">
-        <div className="text-xs text-gray-500 mb-1">desc_site (source)</div>
-        <pre className="whitespace-pre-wrap break-words text-xs text-gray-800 max-h-40 overflow-auto">
-          {selected?.desc_site || "—"}
-        </pre>
-      </div>
-      <div className="rounded border bg-gray-50 p-3">
-        <div className="text-xs text-gray-500 mb-1">description (source)</div>
-        <pre className="whitespace-pre-wrap break-words text-xs text-gray-800 max-h-60 overflow-auto">
-          {selected?.description || "—"}
-        </pre>
-      </div>
-      <div className="rounded border bg-gray-50 p-3">
-        <div className="text-xs text-gray-500 mb-1">compte_rendu (source)</div>
-        <pre className="whitespace-pre-wrap break-words text-xs text-gray-800 max-h-60 overflow-auto">
-          {selected?.compte_rendu || "—"}
-        </pre>
-      </div>
-    </div>
-  )}
-</div>
 
               <div className="rounded-lg border bg-white p-4 space-y-3">
                 <SectionTitle title="Règle appliquée" />

@@ -1,4 +1,3 @@
-#Backend/schemas/regle_facturation.py
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 
@@ -8,14 +7,17 @@ class RegleFacturationOut(BaseModel):
     code: str
     libelle: Optional[str] = None
     condition_sql: Optional[str] = None
-    condition_json: Optional[Dict[str, Any]] = None  # ✅ AJOUT LECTURE
+    condition_json: Optional[Dict[str, Any]] = None
     statut_facturation: Optional[str] = None
 
-    # ✅ pour les tags
     code_activite: Optional[str] = None
     code_produit: Optional[str] = None
     plp_applicable: Optional[bool] = None
     categorie: Optional[str] = None
+
+    # ✅ soft delete
+    is_active: bool = True
+    deleted_at: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -44,3 +46,6 @@ class RegleFacturationUpdate(BaseModel):
     code_produit: Optional[str] = None
     plp_applicable: Optional[bool] = None
     categorie: Optional[str] = None
+
+    # ✅ allow toggle active via PATCH (optionnel)
+    is_active: Optional[bool] = None
