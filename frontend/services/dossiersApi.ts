@@ -1,4 +1,7 @@
 // frontend/services/dossiersApi.ts
+
+import { normalizeString, extractPalierFromEvenements } from '../utils/stringUtils';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 /* =========================
@@ -66,6 +69,14 @@ export interface DossierFacturable {
   regle_articles_attendus?: any;
   statut_article?: string | null;
   statut_article_vs_regle?: string | null;
+  
+  // ✅ Champs existants
+  palier: string | null;
+  
+  // ✅ NOUVEAUX CHAMPS
+  palier_phrase?: string | null;
+  evenements?: string | null;
+  compte_rendu?: string | null;
 }
 
 export const statutsFinal = ["FACTURABLE", "NON_FACTURABLE", "A_VERIFIER", "CONDITIONNEL"] as const;
@@ -73,7 +84,7 @@ export const statutsCroisement = ["OK", "ABSENT_PRAXEDO", "ABSENT_PIDI", "INCONN
 
 function cleanValue(v?: string) {
   if (v == null) return undefined;
-  const x = v.trim();
+  const x = normalizeString(v);
   if (!x) return undefined;
   if (x.toLowerCase() === "tous" || x.toLowerCase() === "tout" || x === "*") return undefined;
   return x;
@@ -111,6 +122,32 @@ export async function listDossiers(filters: DossiersFilters = {}): Promise<Dossi
   return response.json();
 }
 
+/**
+ * Extrait le nom de fichier depuis l'en-tête Content-Disposition
+ */
+function extractFilenameFromContentDisposition(contentDisposition: string | null): string | null {
+  if (!contentDisposition) return null;
+  
+  // Plusieurs patterns possibles
+  const patterns = [
+    /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/,  // Pattern standard
+    /filename="([^"]+)"/,                       // filename="..."
+    /filename=([^;]+)/,                          // filename=...
+  ];
+  
+  for (const pattern of patterns) {
+    const match = contentDisposition.match(pattern);
+    if (match) {
+      // Nettoyer le nom de fichier
+      let filename = match[1] || match[2] || match[0];
+      filename = filename.replace(/['"]/g, '').trim();
+      if (filename) return filename;
+    }
+  }
+  
+  return null;
+}
+
 export async function exportDossiersXlsx(filters: DossiersFilters = {}): Promise<void> {
   const params = buildParams(filters);
   params.delete("limit");
@@ -119,33 +156,56 @@ export async function exportDossiersXlsx(filters: DossiersFilters = {}): Promise
   const qs = params.toString();
   const url = `${API_URL}/api/dossiers/export.xlsx${qs ? `?${qs}` : ""}`;
 
+  console.log("📥 Export Excel - URL:", url);
+
   const response = await fetch(url, {
     method: "GET",
-    headers: { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+    headers: { 
+      Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" 
+    },
   });
 
   if (!response.ok) {
     const errorText = await response.text();
+    console.error("❌ Export Excel failed:", response.status, errorText);
     throw new Error(`Erreur ${response.status}: ${errorText}`);
   }
 
+  // Récupérer le blob
   const blob = await response.blob();
+  
+  // Vérifier que c'est bien un fichier Excel
+  if (blob.size === 0) {
+    throw new Error("Le fichier Excel est vide");
+  }
+
+  // Créer l'URL de téléchargement
   const downloadUrl = window.URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = downloadUrl;
 
+  // Déterminer le nom du fichier
   const contentDisposition = response.headers.get("Content-Disposition");
-  let filename = "dossiers_export.xlsx";
-  if (contentDisposition) {
-    const m = contentDisposition.match(/filename="?(.+)"?/);
-    if (m?.[1]) filename = m[1];
+  let filename = extractFilenameFromContentDisposition(contentDisposition);
+  
+  // Fallback si pas de nom ou nom invalide
+  if (!filename || !filename.endsWith('.xlsx')) {
+    // Construire un nom de fichier par défaut avec la date
+    const date = new Date().toISOString().split('T')[0];
+    filename = `dossiers_export_${date}.xlsx`;
   }
+
+  console.log("📥 Téléchargement Excel - Fichier:", filename);
 
   link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  window.URL.revokeObjectURL(downloadUrl);
+  
+  // Nettoyer l'URL
+  setTimeout(() => {
+    window.URL.revokeObjectURL(downloadUrl);
+  }, 100);
 }
 
 /* =========================

@@ -32,6 +32,30 @@ CLOTURE_CODES = {
 }
 
 # -------------------------------------------------------------------
+# Extraction palier depuis événements
+# -------------------------------------------------------------------
+PALIER_NUM_RE = re.compile(r"\bpalier\s*([123])\b", re.IGNORECASE)
+
+def _extract_palier_from_evenements(evenements: str | None) -> str | None:
+    if not evenements:
+        return None
+    s = (evenements or "").strip()
+    if not s:
+        return None
+
+    # cherche "Palier 1/2/3"
+    m = PALIER_NUM_RE.search(s)
+    if m:
+        return f"PALIER_{m.group(1)}"
+
+    # cas "Aucunes regles applicables" => Palier 1 (ton besoin)
+    low = s.lower()
+    if ("aucun" in low or "aucunes" in low) and ("regle" in low or "règle" in low) and ("applic" in low):
+        return "PALIER_1"
+
+    return None
+
+# -------------------------------------------------------------------
 # Normalisation d'en-têtes
 # -------------------------------------------------------------------
 def _norm(s: str) -> str:
@@ -677,10 +701,19 @@ async def import_praxedo_cr10(
             cr = _clean_text(_val(h, "compte_rendu", "compterendu", "compte_rendu_")) \
                  or _clean_text(_find_value_by_header_like(raw_row, "compte", "rendu"))
 
+            # Extraction des événements et du palier
+            evenements = _clean_text(_val(h, "evenements", "evenement", "events"))
+            if not evenements:
+                evenements = _clean_text(_find_value_by_header_like(raw_row, "evenement"))
+            
+            palier = _extract_palier_from_evenements(evenements)
+
             by_ot[ot] = {
                 "id_externe": ot,
                 "nom_site": nd,
                 "compte_rendu": cr,
+                "evenements": evenements,
+                "palier": palier,
                 "imported_at": now,
             }
 
@@ -699,6 +732,8 @@ async def import_praxedo_cr10(
             set_={
                 "nom_site": stmt.excluded.nom_site,
                 "compte_rendu": stmt.excluded.compte_rendu,
+                "evenements": stmt.excluded.evenements,
+                "palier": stmt.excluded.palier,
                 "imported_at": stmt.excluded.imported_at,
             },
         )

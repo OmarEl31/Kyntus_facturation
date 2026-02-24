@@ -1,4 +1,4 @@
-# Backend/routes/dossiers.py
+# backend/routes/dossiers.py
 from __future__ import annotations
 
 import io
@@ -17,23 +17,16 @@ from schemas.dossier_facturable import DossierFacturable
 
 router = APIRouter(prefix="/api/dossiers", tags=["dossiers"])
 
-
-# ---------------------------
-# Helpers export / formatting
-# ---------------------------
-
 _TOKEN_RE = re.compile(r"\b[A-Z]{2,}[A-Z0-9]{0,12}\b")
 
 
 def _excel_cell(v: Any) -> str:
-    """Convertit n'importe quelle valeur (jsonb, array, datetime, etc.) en string propre pour Excel."""
     if v is None:
         return ""
     if isinstance(v, (list, tuple, set)):
         return " | ".join(_excel_cell(x) for x in v)
     if isinstance(v, dict):
         return json.dumps(v, ensure_ascii=False)
-    # datetime/date -> isoformat si possible
     if hasattr(v, "isoformat"):
         try:
             return v.isoformat(sep=" ")
@@ -43,22 +36,20 @@ def _excel_cell(v: Any) -> str:
 
 
 def _extract_pidi_tokens(liste_articles: str | None) -> str:
-    """Renvoie une string 'TOKEN1 | TOKEN2 | ...' comme dans l'UI chips."""
     if not liste_articles:
         return ""
     s = str(liste_articles).upper()
     matches = _TOKEN_RE.findall(s)
-    toks = []
+
+    toks: list[str] = []
     for t in matches:
         t = t.strip()
-        if not t:
-            continue
-        if t in ("PIDI", "BRUT"):
+        if not t or t in ("PIDI", "BRUT"):
             continue
         toks.append(t)
-    # unique en gardant l'ordre
+
     seen = set()
-    out = []
+    out: list[str] = []
     for t in toks:
         if t not in seen:
             seen.add(t)
@@ -116,10 +107,6 @@ def _base_query(
     return qs
 
 
-# ---------------------------
-# API list
-# ---------------------------
-
 @router.get("/", response_model=list[DossierFacturable])
 def get_dossiers(
     q: str | None = None,
@@ -134,30 +121,25 @@ def get_dossiers(
     return qs.limit(limit).offset(offset).all()
 
 
-# ---------------------------
-# API export XLSX (avec articles)
-# ---------------------------
-
 @router.get("/export.xlsx")
 def export_dossiers_xlsx(
     q: str | None = None,
     statut: str | None = None,
     croisement: str | None = None,
     ppd: str | None = None,
-    # IMPORTANT : par défaut on exporte tout (pas 50)
     db: Session = Depends(get_db),
 ):
     qs = _base_query(db, q=q, statut=statut, croisement=croisement, ppd=ppd)
     rows = qs.all()
 
     from openpyxl import Workbook
+    from openpyxl.styles import Alignment
     from openpyxl.utils import get_column_letter
 
     wb = Workbook()
     ws = wb.active
     ws.title = "dossiers"
 
-    # ✅ Colonnes exportées (ajoute ici tout ce que tu veux)
     headers = [
         "key_match",
         "ot_key",
@@ -176,11 +158,9 @@ def export_dossiers_xlsx(
         "date_planifiee",
         "date_cloture",
         "generated_at",
-        # ✅ Articles
-        "article_facturation_propose",  # terrain proposé
-        "liste_articles",               # PIDI brut
-        "pidi_tokens",                  # tokens extraits (chips)
-        # (optionnel) champs JSON utiles
+        "article_facturation_propose",
+        "liste_articles",
+        "pidi_tokens",
         "services",
         "prix_degressifs",
         "articles_optionnels",
@@ -189,14 +169,22 @@ def export_dossiers_xlsx(
         "documents_attendus",
         "pieces_facturation",
         "outils_depose",
-        # ✅ AJOUTS demandés (fin de liste)
         "commentaire_technicien",
         "source_facturation",
         "force_plp",
         "add_tsfh",
+        "palier",
+        "palier_phrase",
+        "evenements",
+        "compte_rendu",
+        "phrase_declencheuse",
     ]
-
     ws.append(headers)
+
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = cell.font.copy(bold=True)
+        cell.alignment = Alignment(wrap_text=True)
 
     for r in rows:
         ws.append([
@@ -217,11 +205,9 @@ def export_dossiers_xlsx(
             _excel_cell(getattr(r, "date_planifiee", None)),
             _excel_cell(getattr(r, "date_cloture", None)),
             _excel_cell(getattr(r, "generated_at", None)),
-            # ✅ Articles
             _excel_cell(getattr(r, "article_facturation_propose", None)),
             _excel_cell(getattr(r, "liste_articles", None)),
             _extract_pidi_tokens(getattr(r, "liste_articles", None)),
-            # JSON / arrays
             _excel_cell(getattr(r, "services", None)),
             _excel_cell(getattr(r, "prix_degressifs", None)),
             _excel_cell(getattr(r, "articles_optionnels", None)),
@@ -230,23 +216,40 @@ def export_dossiers_xlsx(
             _excel_cell(getattr(r, "documents_attendus", None)),
             _excel_cell(getattr(r, "pieces_facturation", None)),
             _excel_cell(getattr(r, "outils_depose", None)),
-            # ✅ AJOUTS demandés (fin de ligne)
             _excel_cell(getattr(r, "commentaire_technicien", None)),
             _excel_cell(getattr(r, "source_facturation", None)),
             _excel_cell(getattr(r, "force_plp", None)),
             _excel_cell(getattr(r, "add_tsfh", None)),
+            _excel_cell(getattr(r, "palier", None)),
+            _excel_cell(getattr(r, "palier_phrase", None)),
+            _excel_cell(getattr(r, "evenements", None)),
+            _excel_cell(getattr(r, "compte_rendu", None)),
+            _excel_cell(getattr(r, "phrase_declencheuse", None)),
         ])
 
-    # un minimum d'auto-size
     for col_idx in range(1, len(headers) + 1):
         col_letter = get_column_letter(col_idx)
-        ws.column_dimensions[col_letter].width = min(45, max(12, len(headers[col_idx - 1]) + 2))
+        ws.column_dimensions[col_letter].width = min(60, max(8, len(headers[col_idx - 1]) + 2))
+
+    ws.freeze_panes = "A2"
 
     bio = io.BytesIO()
     wb.save(bio)
     bio.seek(0)
 
-    filename = "dossiers_export.xlsx"
+    filename_parts = ["dossiers"]
+    if statut:
+        filename_parts.append(f"statut_{statut}")
+    if croisement:
+        filename_parts.append(f"croisement_{croisement}")
+    if ppd:
+        filename_parts.append(f"ppd_{ppd}")
+    if q:
+        clean_q = re.sub(r"[^\w\-_]", "_", q)[:30]
+        filename_parts.append(f"search_{clean_q}")
+
+    filename = "_".join(filename_parts) + ".xlsx"
+
     return StreamingResponse(
         bio,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

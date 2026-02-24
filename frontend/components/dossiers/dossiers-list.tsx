@@ -1,4 +1,4 @@
-//frontend/components/dossiers/dossiers-list.tsx
+// frontend/components/dossiers/dossiers-list.tsx
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -231,7 +231,8 @@ function parseAnyList(v?: string | null): string[] {
 function _extractCommentaireReleve(compte_rendu: string | null): string | null {
   if (!compte_rendu) return null;
   
-  const s = String(compte_rendu).trim();
+  // Remplacer les NBSP par des espaces normaux
+  const s = String(compte_rendu).replace(/\u00a0/g, ' ').trim();
   
   // Chercher plusieurs formats possibles
   const patterns = [
@@ -1362,7 +1363,7 @@ export default function DossiersList() {
       )}
 
       {/* ═══════════════════════════════════════════════
-          DOSSIERS SECTION
+          DOSSIERS SECTION - AVEC NOUVELLE COLONNE PALIER
       ══════════════════════════════════════════════════ */}
       {showDossiersSection && (
         <div className="border rounded-lg overflow-auto bg-white mx-2">
@@ -1379,7 +1380,7 @@ export default function DossiersList() {
             )}
           </div>
 
-          <table className="min-w-[1900px] w-full text-sm">
+          <table className="min-w-[2000px] w-full text-sm">
             <thead className="bg-gray-50">
               <tr className="text-left">
                 <th className="p-3">OT</th>
@@ -1396,6 +1397,7 @@ export default function DossiersList() {
                 <th className="p-3">Croisement</th>
                 <th className="p-3">Praxedo</th>
                 <th className="p-3">PIDI</th>
+                <th className="p-3">Palier</th> {/* ✅ NOUVELLE COLONNE */}
                 <th className="p-3">Actions</th>
                 <th className="p-3">Planifiée</th>
                 <th className="p-3"></th>
@@ -1405,7 +1407,7 @@ export default function DossiersList() {
             <tbody>
               {items.length === 0 ? (
                 <tr>
-                  <td colSpan={17} className="p-6 text-center text-gray-500">
+                  <td colSpan={18} className="p-6 text-center text-gray-500">
                     {loading ? "Chargement…" : "Aucun dossier à afficher."}
                   </td>
                 </tr>
@@ -1481,6 +1483,13 @@ export default function DossiersList() {
                         <span className="text-purple-700 font-medium">{pidiLabel(d)}</span>
                       </td>
                       <td className="p-3">
+                        {d.palier ? (
+                          <Badge txt={d.palier.replaceAll("_", " ")} kind="lightBlue" />
+                        ) : (
+                          <span className="text-gray-500">—</span>
+                        )}
+                      </td>
+                      <td className="p-3">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1503,7 +1512,7 @@ export default function DossiersList() {
               ) : (
                 groupedEntries.map(([ppd, rows]) => (
                   <tr key={ppd} className="border-t">
-                    <td colSpan={17} className="p-0">
+                    <td colSpan={18} className="p-0">
                       <div className="px-3 py-2 bg-gray-50 border-b flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <span className="text-sm font-semibold text-gray-900">
@@ -1514,7 +1523,7 @@ export default function DossiersList() {
                       </div>
 
                       <div className="overflow-auto">
-                        <table className="min-w-[1900px] w-full text-sm">
+                        <table className="min-w-[2000px] w-full text-sm">
                           <tbody>
                             {rows.map((d) => {
                               const sf = d.statut_final ?? "NON_FACTURABLE";
@@ -1598,7 +1607,14 @@ export default function DossiersList() {
                                   <td className="p-3 w-[160px]">
                                     <span className="text-purple-700 font-medium">{pidiLabel(d)}</span>
                                   </td>
-                                  <td className="p-3">
+                                  <td className="p-3 w-[100px]">
+                                    {d.palier ? (
+                                      <Badge txt={d.palier.replaceAll("_", " ")} kind="lightBlue" />
+                                    ) : (
+                                      <span className="text-gray-500">—</span>
+                                    )}
+                                  </td>
+                                  <td className="p-3 w-[80px]">
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();
@@ -1630,7 +1646,7 @@ export default function DossiersList() {
       )}
 
       {/* ═══════════════════════════════════════════════
-          DRAWER avec commentaire technique
+          DRAWER avec commentaire technique + PALIER + PHRASE + EVENEMENTS
       ══════════════════════════════════════════════════ */}
       {drawerOpen && selected && (
         <div className="fixed inset-0 z-50">
@@ -1715,6 +1731,18 @@ export default function DossiersList() {
                       )
                     }
                   />
+                  {/* ✅ NOUVEAUX CHAMPS */}
+                  <KeyValue
+                    k="Palier"
+                    v={
+                      selected.palier ? (
+                        <Badge txt={selected.palier.replaceAll("_", " ")} kind="lightBlue" />
+                      ) : (
+                        "—"
+                      )
+                    }
+                  />
+                  <KeyValue k="Palier (phrase)" v={selected.palier_phrase ?? "—"} />
                   <KeyValue k="Planifiée" v={formatFrDate(selected.date_planifiee)} />
                   <KeyValue k="Technicien" v={selected.technicien ?? "—"} />
                 </div>
@@ -1754,7 +1782,7 @@ export default function DossiersList() {
                     
                     // Si pas trouvé, chercher dans compte_rendu
                     if (!commentaire && compteRendu) {
-                      const crMatch = compteRendu.match(/#commentairereleve\s*=\s*([^#]+)/i);
+                      const crMatch = compteRendu.replace(/\u00a0/g, ' ').match(/#commentairereleve\s*=\s*([^#]+)/i);
                       if (crMatch && crMatch[1]) {
                         commentaire = crMatch[1].trim();
                       }
@@ -1840,6 +1868,13 @@ export default function DossiersList() {
                       <div className="text-xs text-gray-500 mb-1">compte_rendu (source)</div>
                       <pre className="whitespace-pre-wrap break-words text-xs text-gray-800 max-h-60 overflow-auto">
                         {selected?.compte_rendu || "—"}
+                      </pre>
+                    </div>
+                    {/* ✅ NOUVEAU : evenements (source) */}
+                    <div className="rounded border bg-gray-50 p-3">
+                      <div className="text-xs text-gray-500 mb-1">evenements (source)</div>
+                      <pre className="whitespace-pre-wrap break-words text-xs text-gray-800 max-h-60 overflow-auto">
+                        {selected?.evenements || "—"}
                       </pre>
                     </div>
                   </div>
