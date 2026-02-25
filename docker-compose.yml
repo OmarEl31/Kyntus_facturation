@@ -42,6 +42,24 @@ services:
     networks:
       - kyntus_net
 
+  # ✅ NOUVEAU : Selenium Chrome stable
+  selenium:
+    image: selenium/standalone-chrome:latest
+    container_name: kyntus_selenium
+    restart: unless-stopped
+    shm_size: 2gb
+    networks:
+      - kyntus_net
+    # Optionnel : exposer pour debug (pas obligatoire)
+    # ports:
+    #   - "127.0.0.1:4444:4444"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:4444/status | grep -q 'ready'"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
   backend:
     build:
       context: .
@@ -58,6 +76,10 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       CORS_ORIGINS: "http://localhost:3100,http://127.0.0.1:3100"
+
+      # ✅ NOUVEAU : Selenium remote
+      SELENIUM_REMOTE_URL: "http://selenium:4444/wd/hub"
+
     working_dir: /app/Backend
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
     volumes:
@@ -65,6 +87,8 @@ services:
       - backend_logs:/app/Backend/logs
     depends_on:
       db:
+        condition: service_healthy
+      selenium:
         condition: service_healthy
     ports:
       - "127.0.0.1:8100:8000"

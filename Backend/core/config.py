@@ -12,10 +12,12 @@ class Settings(BaseSettings):
     # Exemple: "http://localhost:3100,http://127.0.0.1:3100"
     CORS_ORIGINS: str = "http://localhost:3100,http://127.0.0.1:3100"
 
-     # Identifiants Praxedo pour le Scraper (Optionnels, n'empêchent pas le reste de marcher)
+    # Identifiants Praxedo
     PRAXEDO_USER: str | None = None
     PRAXEDO_PASSWORD: str | None = None
 
+    # ✅ Selenium remote (pour Docker)
+    SELENIUM_REMOTE_URL: str | None = None
 
     @property
     def DATABASE_URL(self) -> str:
@@ -26,7 +28,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_file=".env",
-        extra="ignore",  # ✅ ignore les variables non attendues
+        extra="ignore",
     )
 
 @lru_cache

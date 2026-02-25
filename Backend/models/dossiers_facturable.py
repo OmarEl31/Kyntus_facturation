@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from sqlalchemy import Boolean, Column, DateTime, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.orm import column_property
-from sqlalchemy.sql import literal_column
 
 from database.connection import Base
 
@@ -13,10 +11,8 @@ class VDossierFacturable(Base):
     __tablename__ = "v_dossier_facturable"
     __table_args__ = {"schema": "canonique"}
 
-    # PK
     key_match = Column(Text, primary_key=True)
 
-    # TEXT
     ot_key = Column(Text)
     nd_global = Column(Text)
     statut_croisement = Column(Text)
@@ -41,7 +37,6 @@ class VDossierFacturable(Base):
     libelle_regle = Column(Text)
     condition_sql = Column(Text)
 
-    # JSONB
     condition_json = Column(JSONB)
     type_branchement = Column(JSONB)
     services = Column(JSONB)
@@ -49,7 +44,6 @@ class VDossierFacturable(Base):
     articles_optionnels = Column(JSONB)
     justificatifs = Column(JSONB)
 
-    # TEXT
     statut_facturation = Column(Text)
     code_chantier_generique = Column(Text)
     categorie = Column(Text)
@@ -68,38 +62,39 @@ class VDossierFacturable(Base):
     numero_ppd = Column(Text)
     attachement_valide = Column(Text)
 
-    # ARRAYS
     codes_cloture_facturables = Column(ARRAY(Text))
     documents_attendus = Column(ARRAY(Text))
     pieces_facturation = Column(ARRAY(Text))
     outils_depose = Column(ARRAY(Text))
 
-    # BOOL
     plp_applicable = Column(Boolean)
     is_previsite = Column(Boolean)
     cloture_facturable = Column(Boolean)
 
-    # TIMESTAMPS
     date_cloture = Column(DateTime)
     pidi_date_creation = Column(DateTime)
     generated_at = Column(DateTime)
 
-    # AUDIT / FACTURATION
     force_plp = Column(Boolean)
     add_tsfh = Column(Boolean)
     commentaire_technicien = Column(Text)
     source_facturation = Column(Text)
 
-    # ✅ NOUVEAUX CHAMPS (présents dans ta view)
+    # ✅ champs palier CR10 (existent dans ta view)
     palier = Column(Text)
     palier_phrase = Column(Text)
     evenements = Column(Text)
     compte_rendu = Column(Text)
 
-    # ✅ CHAMP présent dans la view (tu l'as dans le SELECT final)
-    # phrase_declencheuse existe dans ta view, mais tu ne l'as pas encore dans le modèle :
+    # ✅ la view expose aussi phrase_declencheuse (dans ton SQL)
     phrase_declencheuse = Column(Text)
 
-    # ❌ colonnes ABSENTES de la view => on mappe en NULL pour éviter les 500
-    statut_article_vs_regle = column_property(literal_column("NULL::text"))
-    regle_articles_attendus = column_property(literal_column("NULL::jsonb"))
+    # ❌ NE PAS mapper si la colonne n'existe pas dans la view
+    # (sinon SQLAlchemy la met dans le SELECT → UndefinedColumn → 500)
+    @property
+    def statut_article_vs_regle(self):
+        return None
+
+    @property
+    def regle_articles_attendus(self):
+        return None
