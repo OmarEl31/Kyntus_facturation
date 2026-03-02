@@ -1,19 +1,5 @@
-# .gitignore pour Python + React 
-# Python
-__pycache__/
-*.py[cod]
-*.env
-venv/
-.env
-.env.local
-*.sqlite3
-
-# FastAPI / build
-/dist/
-*.log
-
-# React / Node
-node_modules/
+##node_modules/
+>>>>>>> a841edb (feat: initialisation Kyntus Orange V2)
 build/
 dist/
 .npm/

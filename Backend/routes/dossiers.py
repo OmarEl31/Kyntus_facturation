@@ -1,0 +1,270 @@
+# Backend/routes/dossiers.py
+from __future__ import annotations
+
+import io
+import json
+import re
+from typing import Any
+
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy import case, or_
+from sqlalchemy.orm import Session
+
+from database.connection import get_db
+from models.dossiers_facturable import VDossierFacturable
+from schemas.dossier_facturable import DossierFacturable
+
+# --- NOUVEAU: Imports dyal l'Auth ---
+from routes.auth import get_current_user
+from models.user import User
+# ------------------------------------
+
+router = APIRouter(prefix="/api/dossiers", tags=["dossiers"])
+
+_TOKEN_RE = re.compile(r"\b[A-Z]{2,}[A-Z0-9]{0,12}\b")
+
+
+def _excel_cell(v: Any) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, (list, tuple, set)):
+        return " | ".join(_excel_cell(x) for x in v)
+    if isinstance(v, dict):
+        return json.dumps(v, ensure_ascii=False)
+    if hasattr(v, "isoformat"):
+        try:
+            return v.isoformat(sep=" ")
+        except TypeError:
+            return v.isoformat()
+    return str(v)
+
+
+def _extract_pidi_tokens(liste_articles: str | None) -> str:
+    if not liste_articles:
+        return ""
+    s = str(liste_articles).upper()
+    matches = _TOKEN_RE.findall(s)
+
+    toks: list[str] = []
+    for t in matches:
+        t = t.strip()
+        if not t or t in ("PIDI", "BRUT"):
+            continue
+        toks.append(t)
+
+    seen = set()
+    out: list[str] = []
+    for t in toks:
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return " | ".join(out)
+
+
+def _base_query(
+    db: Session,
+    q: str | None,
+    statut: str | None,
+    croisement: str | None,
+    ppd: str | None,
+    current_user: User,  # <-- NOUVEAU: Kanpassiw l'user l'moteur dyal recherche
+):
+    qs = db.query(VDossierFacturable)
+
+    # --- NOUVEAU: L'ISOLATION DES DONNÉES ---
+    # L'backend ghadi yjbed ghir les dossiers li user_id dyalhom kay-sawi id dyal l'user connecte
+    qs = qs.filter(VDossierFacturable.user_id == current_user.id)
+    # ----------------------------------------
+
+    if q:
+        needle = q.strip()
+        if needle:
+            qs = qs.filter(
+                or_(
+                    VDossierFacturable.ot_key.ilike(f"%{needle}%"),
+                    VDossierFacturable.nd_global.ilike(f"%{needle}%"),
+                    VDossierFacturable.key_match.ilike(f"%{needle}%"),
+                )
+            )
+
+    if statut:
+        qs = qs.filter(VDossierFacturable.statut_final == statut)
+
+    if croisement:
+        qs = qs.filter(VDossierFacturable.statut_croisement == croisement)
+
+    if ppd:
+        needle_ppd = ppd.strip()
+        if needle_ppd:
+            qs = qs.filter(VDossierFacturable.numero_ppd.ilike(f"%{needle_ppd}%"))
+
+    qs = qs.order_by(
+        case(
+            (VDossierFacturable.statut_final == "FACTURABLE", 1),
+            (VDossierFacturable.statut_final == "CONDITIONNEL", 2),
+            (VDossierFacturable.statut_final == "NON_FACTURABLE", 3),
+            (VDossierFacturable.statut_final == "A_VERIFIER", 4),
+            else_=5,
+        ).asc(),
+        case(
+            (VDossierFacturable.motif_verification == "CROISEMENT_INCOMPLET", 1),
+            else_=2,
+        ).asc(),
+        VDossierFacturable.generated_at.desc().nullslast(),
+        VDossierFacturable.key_match.asc(),
+    )
+
+    return qs
+
+
+@router.get("/", response_model=list[DossierFacturable])
+def get_dossiers(
+    q: str | None = None,
+    statut: str | None = None,
+    croisement: str | None = None,
+    ppd: str | None = None,
+    limit: int = Query(50, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),  # <-- NOUVEAU: Le Videur 
+):
+    qs = _base_query(db, q=q, statut=statut, croisement=croisement, ppd=ppd, current_user=current_user)
+    return qs.limit(limit).offset(offset).all()
+
+
+@router.get("/export.xlsx")
+def export_dossiers_xlsx(
+    q: str | None = None,
+    statut: str | None = None,
+    croisement: str | None = None,
+    ppd: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),  # <-- NOUVEAU: Le Videur
+):
+    qs = _base_query(db, q=q, statut=statut, croisement=croisement, ppd=ppd, current_user=current_user)
+    rows = qs.all()
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "dossiers"
+
+    headers = [
+        "key_match",
+        "ot_key",
+        "nd_global",
+        "numero_ppd",
+        "statut_final",
+        "statut_croisement",
+        "motif_verification",
+        "activite_code",
+        "produit_code",
+        "code_cible",
+        "code_cloture_code",
+        "attachement_valide",
+        "is_previsite",
+        "technicien",
+        "date_planifiee",
+        "date_cloture",
+        "generated_at",
+        "article_facturation_propose",
+        "liste_articles",
+        "pidi_tokens",
+        "services",
+        "prix_degressifs",
+        "articles_optionnels",
+        "type_branchement",
+        "justificatifs",
+        "documents_attendus",
+        "pieces_facturation",
+        "outils_depose",
+        "commentaire_technicien",
+        "source_facturation",
+        "force_plp",
+        "add_tsfh",
+        "palier",
+        "palier_phrase",
+        "evenements",
+        "compte_rendu",
+        "phrase_declencheuse",
+    ]
+    ws.append(headers)
+
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = cell.font.copy(bold=True)
+        cell.alignment = Alignment(wrap_text=True)
+
+    for r in rows:
+        ws.append([
+            _excel_cell(getattr(r, "key_match", None)),
+            _excel_cell(getattr(r, "ot_key", None)),
+            _excel_cell(getattr(r, "nd_global", None)),
+            _excel_cell(getattr(r, "numero_ppd", None)),
+            _excel_cell(getattr(r, "statut_final", None)),
+            _excel_cell(getattr(r, "statut_croisement", None)),
+            _excel_cell(getattr(r, "motif_verification", None)),
+            _excel_cell(getattr(r, "activite_code", None)),
+            _excel_cell(getattr(r, "produit_code", None)),
+            _excel_cell(getattr(r, "code_cible", None)),
+            _excel_cell(getattr(r, "code_cloture_code", None)),
+            _excel_cell(getattr(r, "attachement_valide", None)),
+            _excel_cell(getattr(r, "is_previsite", None)),
+            _excel_cell(getattr(r, "technicien", None)),
+            _excel_cell(getattr(r, "date_planifiee", None)),
+            _excel_cell(getattr(r, "date_cloture", None)),
+            _excel_cell(getattr(r, "generated_at", None)),
+            _excel_cell(getattr(r, "article_facturation_propose", None)),
+            _excel_cell(getattr(r, "liste_articles", None)),
+            _extract_pidi_tokens(getattr(r, "liste_articles", None)),
+            _excel_cell(getattr(r, "services", None)),
+            _excel_cell(getattr(r, "prix_degressifs", None)),
+            _excel_cell(getattr(r, "articles_optionnels", None)),
+            _excel_cell(getattr(r, "type_branchement", None)),
+            _excel_cell(getattr(r, "justificatifs", None)),
+            _excel_cell(getattr(r, "documents_attendus", None)),
+            _excel_cell(getattr(r, "pieces_facturation", None)),
+            _excel_cell(getattr(r, "outils_depose", None)),
+            _excel_cell(getattr(r, "commentaire_technicien", None)),
+            _excel_cell(getattr(r, "source_facturation", None)),
+            _excel_cell(getattr(r, "force_plp", None)),
+            _excel_cell(getattr(r, "add_tsfh", None)),
+            _excel_cell(getattr(r, "palier", None)),
+            _excel_cell(getattr(r, "palier_phrase", None)),
+            _excel_cell(getattr(r, "evenements", None)),
+            _excel_cell(getattr(r, "compte_rendu", None)),
+            _excel_cell(getattr(r, "phrase_declencheuse", None)),
+        ])
+
+    for col_idx in range(1, len(headers) + 1):
+        col_letter = get_column_letter(col_idx)
+        ws.column_dimensions[col_letter].width = min(60, max(8, len(headers[col_idx - 1]) + 2))
+
+    ws.freeze_panes = "A2"
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+
+    filename_parts = ["dossiers"]
+    if statut:
+        filename_parts.append(f"statut_{statut}")
+    if croisement:
+        filename_parts.append(f"croisement_{croisement}")
+    if ppd:
+        filename_parts.append(f"ppd_{ppd}")
+    if q:
+        clean_q = re.sub(r"[^\w\-_]", "_", q)[:30]
+        filename_parts.append(f"search_{clean_q}")
+
+    filename = "_".join(filename_parts) + ".xlsx"
+
+    return StreamingResponse(
+        bio,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

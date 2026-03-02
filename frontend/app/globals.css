@@ -1,0 +1,468 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   KYNTUS THEME — VERSION AMÉLIORÉE (LIGHT + DARK)
+   ============================================================ */
+@layer base {
+  :root {
+    /* Neutral System (light) */
+    --background: oklch(0.985 0 0);
+    --foreground: oklch(0.18 0 0);
+    --muted: oklch(0.96 0 0);
+    --muted-foreground: oklch(0.53 0 0);
+    --border: oklch(0.89 0 0);
+    --ring: oklch(0.70 0 1);
+
+    /* Brand Core */
+    --kyntus-primary: #1e3a5f;
+    --kyntus-primary-dark: #0f1f35;
+    --kyntus-primary-light: #2d5a8c;
+
+    --kyntus-accent: #ff8c42;
+    --kyntus-accent-dark: #e67e2f;
+    --kyntus-accent-light: #ffb380;
+
+    /* Support colors */
+    --success: #16a34a;
+    --warning: #eab308;
+    --error: #dc2626;
+
+    /* Border radius */
+    --radius: 0.625rem;
+
+    /* Shadows 3D */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+    --shadow-3d: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+  }
+
+  .dark {
+    --background: oklch(0.18 0 0);
+    --foreground: oklch(0.985 0 0);
+    --border: oklch(0.28 0 0);
+    --ring: oklch(0.45 0 0);
+    --shadow-3d: 0 25px 50px -12px rgb(0 0 0 / 0.5);
+  }
+
+  /* Reset et normalisation */
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    height: 100%;
+    overflow-x: hidden;
+  }
+
+  body {
+    @apply min-h-screen antialiased bg-[color:var(--background)] text-[color:var(--foreground)] transition-colors duration-300 ease-in-out;
+    font-family: "Inter", sans-serif;
+    position: relative;
+    overflow-x: hidden;
+    width: 100%;
+  }
+
+  * {
+    @apply border-border outline-none;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight text-gray-900;
+  }
+
+  ::selection {
+    background-color: var(--kyntus-accent-light);
+    color: var(--kyntus-primary-dark);
+  }
+}
+
+/* ============================================================
+   LAYOUT - Correction de la mise en page
+   ============================================================ */
+@layer components {
+  /* Container principal */
+  .app-container {
+    @apply w-full min-h-screen flex;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    @apply flex-shrink-0;
+    width: 280px;
+    min-width: 280px;
+    max-width: 280px;
+  }
+
+  /* Main content area */
+  .main-content {
+    @apply flex-1 w-full;
+    min-width: 0; /* Important pour éviter le débordement */
+    max-width: calc(100vw - 280px);
+  }
+
+  /* Page wrapper */
+  .page-wrapper {
+    @apply w-full h-full p-6 md:p-8;
+    max-width: 100%;
+  }
+
+  /* Grid responsive pour dashboard */
+  .dashboard-grid {
+    @apply grid gap-6;
+    grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  }
+
+  .dashboard-grid-4 {
+    @apply grid gap-6;
+    grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
+  }
+
+  /* Stats cards container */
+  .stats-container {
+    @apply grid gap-6 mb-8;
+    grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  }
+
+  /* Charts container */
+  .charts-container {
+    @apply grid gap-6;
+    grid-template-columns: repeat(auto-fit, minmax(min(400px, 100%), 1fr));
+  }
+
+  /* ============================================================
+     BUTTONS
+     ============================================================ */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium transition-all duration-200;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .btn-primary {
+    @apply text-white bg-[color:var(--kyntus-primary)] hover:bg-[color:var(--kyntus-primary-dark)] active:scale-[0.98];
+    box-shadow: 0 4px 6px -1px rgba(30, 58, 95, 0.2), 0 2px 4px -2px rgba(30, 58, 95, 0.1);
+  }
+
+  .btn-primary:hover {
+    box-shadow: 0 10px 15px -3px rgba(30, 58, 95, 0.3), 0 4px 6px -4px rgba(30, 58, 95, 0.1);
+    transform: translateY(-2px);
+  }
+
+  .btn-accent {
+    @apply text-white bg-[color:var(--kyntus-accent)] hover:bg-[color:var(--kyntus-accent-dark)] active:scale-[0.98];
+    box-shadow: 0 4px 6px -1px rgba(255, 140, 66, 0.2), 0 2px 4px -2px rgba(255, 140, 66, 0.1);
+  }
+
+  .btn-accent:hover {
+    box-shadow: 0 10px 15px -3px rgba(255, 140, 66, 0.3), 0 4px 6px -4px rgba(255, 140, 66, 0.1);
+    transform: translateY(-2px);
+  }
+
+  .btn-secondary {
+    @apply text-gray-700 bg-white border-2 border-gray-200 hover:border-[color:var(--kyntus-primary)] hover:text-[color:var(--kyntus-primary)] active:scale-[0.98];
+  }
+
+  /* ============================================================
+     CARDS 3D - Effet moderne
+     ============================================================ */
+  .card {
+    @apply bg-white rounded-xl border border-gray-200 p-6 transition-all duration-300 ease-out;
+    box-shadow: var(--shadow-sm);
+    position: relative;
+    transform-style: preserve-3d;
+    perspective: 1000px;
+  }
+
+  /* Effet 3D au survol */
+  .card-3d {
+    @apply card;
+    background: linear-gradient(145deg, #ffffff, #f8f9fa);
+  }
+
+  .card-3d::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 2px;
+    background: linear-gradient(145deg, rgba(30, 58, 95, 0.1), rgba(255, 140, 66, 0.1));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  .card-3d:hover::before {
+    opacity: 1;
+  }
+
+  .card-3d:hover {
+    transform: translateY(-8px) rotateX(2deg);
+    box-shadow: var(--shadow-3d);
+  }
+
+  /* Stats card avec effet 3D */
+  .stats-card {
+    @apply card-3d relative overflow-hidden;
+  }
+
+  .stats-card::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    right: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.1) 0%, transparent 70%);
+    transform: scale(0);
+    transition: transform 0.6s ease-out;
+  }
+
+  .stats-card:hover::after {
+    transform: scale(1);
+  }
+
+  /* Icon container dans les stats cards */
+  .stats-icon {
+    @apply w-12 h-12 rounded-lg flex items-center justify-center;
+    background: linear-gradient(135deg, var(--kyntus-primary), var(--kyntus-primary-light));
+    box-shadow: 0 8px 16px -4px rgba(30, 58, 95, 0.3);
+    transition: all 0.3s ease;
+  }
+
+  .stats-card:hover .stats-icon {
+    transform: scale(1.1) rotate(5deg);
+    box-shadow: 0 12px 24px -4px rgba(30, 58, 95, 0.4);
+  }
+
+  /* Chart cards */
+  .chart-card {
+    @apply card-3d;
+    min-height: 400px;
+  }
+
+  /* Card hover simple */
+  .card-hover {
+    @apply hover:shadow-xl hover:-translate-y-1;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* Glass effect card */
+  .card-glass {
+    @apply backdrop-blur-xl bg-white/70 border border-white/20 rounded-xl p-6;
+    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+  }
+
+  /* ============================================================
+     BADGES
+     ============================================================ */
+  .badge {
+    @apply inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border shadow-sm transition-all duration-200;
+  }
+
+  .badge-facturable {
+    @apply bg-green-100 text-green-800 border-green-300;
+  }
+
+  .badge-facturable:hover {
+    @apply bg-green-200 shadow-md scale-105;
+  }
+
+  .badge-non-facturable {
+    @apply bg-red-100 text-red-800 border-red-300;
+  }
+
+  .badge-non-facturable:hover {
+    @apply bg-red-200 shadow-md scale-105;
+  }
+
+  .badge-conditionnel {
+    @apply bg-yellow-100 text-yellow-800 border-yellow-300;
+  }
+
+  .badge-conditionnel:hover {
+    @apply bg-yellow-200 shadow-md scale-105;
+  }
+
+  .badge-attente {
+    @apply bg-orange-100 text-orange-800 border-orange-300;
+  }
+
+  .badge-attente:hover {
+    @apply bg-orange-200 shadow-md scale-105;
+  }
+
+  /* ============================================================
+     INPUTS & FORMS
+     ============================================================ */
+  .input-field {
+    @apply w-full px-4 py-2.5 border rounded-lg bg-white text-gray-900 placeholder-gray-400 transition-all duration-200;
+    @apply focus:outline-none focus:ring-2 focus:ring-[color:var(--kyntus-primary)] focus:border-transparent;
+    @apply hover:border-gray-400;
+  }
+
+  .input-field:focus {
+    box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.1);
+  }
+
+  .select-field {
+    @apply input-field cursor-pointer;
+  }
+
+  /* ============================================================
+     TABLE
+     ============================================================ */
+  .table-container {
+    @apply w-full overflow-x-auto;
+    max-width: 100%;
+  }
+
+  .table {
+    @apply w-full border-collapse;
+    min-width: 100%;
+  }
+
+  .table-row-hover {
+    @apply transition-all duration-200 hover:bg-gray-50 cursor-pointer;
+  }
+
+  .table-row-hover:hover {
+    transform: scale(1.01);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  }
+
+  /* ============================================================
+     ANIMATIONS
+     ============================================================ */
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes slideInFromRight {
+    from {
+      opacity: 0;
+      transform: translateX(30px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes scaleIn {
+    from {
+      opacity: 0;
+      transform: scale(0.9);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: -1000px 0;
+    }
+    100% {
+      background-position: 1000px 0;
+    }
+  }
+
+  .fade-in {
+    animation: fadeIn 0.4s ease-out;
+  }
+
+  .slide-in-right {
+    animation: slideInFromRight 0.4s ease-out;
+  }
+
+  .scale-in {
+    animation: scaleIn 0.3s ease-out;
+  }
+
+  /* Stagger children animation */
+  .stagger-children > * {
+    opacity: 0;
+    animation: fadeIn 0.4s ease-out forwards;
+  }
+
+  .stagger-children > *:nth-child(1) { animation-delay: 0.05s; }
+  .stagger-children > *:nth-child(2) { animation-delay: 0.1s; }
+  .stagger-children > *:nth-child(3) { animation-delay: 0.15s; }
+  .stagger-children > *:nth-child(4) { animation-delay: 0.2s; }
+  .stagger-children > *:nth-child(5) { animation-delay: 0.25s; }
+
+  /* Loading skeleton */
+  .skeleton {
+    @apply bg-gray-200 rounded animate-pulse;
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 2000px 100%;
+    animation: shimmer 2s infinite linear;
+  }
+
+  /* ============================================================
+     UTILITIES
+     ============================================================ */
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, var(--kyntus-primary), var(--kyntus-accent));
+  }
+
+  .divider {
+    @apply h-px bg-gradient-to-r from-transparent via-gray-300 to-transparent;
+  }
+
+  /* Scrollbar personnalisé */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-gray-100 rounded-lg;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-gray-300 rounded-lg hover:bg-gray-400;
+  }
+
+  /* Focus visible pour accessibilité */
+  .focus-visible:focus-visible {
+    @apply outline-none ring-2 ring-[color:var(--kyntus-primary)] ring-offset-2;
+  }
+}
+
+/* ============================================================
+   UTILITIES ADDITIONNELLES
+   ============================================================ */
+@layer utilities {
+  .max-w-container {
+    max-width: 100%;
+    width: 100%;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
