@@ -1,10 +1,27 @@
+# Core
 fastapi==0.115.6
 uvicorn[standard]==0.30.6
+
+# Database
 SQLAlchemy==2.0.36
 psycopg2-binary==2.9.10
+
+# Configuration
 python-dotenv==1.0.1
 pydantic>=2.5
 pydantic-settings>=2.1
-python-multipart 
+
+# Forms and files
+python-multipart
 openpyxl==3.1.5
+
+# Authentication
+pyjwt>=2.0.0
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]  # Add this for password hashing if needed
+
+# Validation
+email-validator>=2.0.0
+
+# Testing/Scraping (if needed)
 selenium==4.17.2

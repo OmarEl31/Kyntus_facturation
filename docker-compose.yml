@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:15
+    image: postgres:17-alpine
     container_name: kyntus_db_main
     restart: unless-stopped
     environment:
@@ -14,7 +14,7 @@ services:
     volumes:
       - kyntus_data:/var/lib/postgresql/data
       - ./backups:/backups
-    networks:
+    networks:  
       - kyntus_net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U kyntus_user -d Kynt_fac_DB"]

@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { RefreshCw, Upload, Download, X, ChevronRight, Info, Layers, ChevronDown, Sparkles } from "lucide-react";
+import { RefreshCw, Upload, Download, X, ChevronRight, Info, Layers, ChevronDown, Sparkles, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -416,7 +416,7 @@ function orangeReasonBadgeKind(r: OrangePpdComparison & { reason?: string }): Ba
 // ──────────────────────────────────────────────────────────────────────────
 
 export default function DossiersList() {
-  const router = useRouter(); // 👈 Router pour la navigation vers scraper
+  const router = useRouter();
 
   // --- affichage des sections ---
   const [showOrangeSection, setShowOrangeSection] = useState(false);
@@ -440,7 +440,7 @@ export default function DossiersList() {
   const [showRawTerrain, setShowRawTerrain] = useState(false);
 
   // --- imports ---
-  const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | "ORANGE_PPD" | "PRAXEDO_CR10" | null>(null);
+  const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | "ORANGE_PPD" | "COMMENTAIRE_TECH" | null>(null);
 
   // --- orange ---
   const [orangeRows, setOrangeRows] = useState<OrangePpdComparison[]>([]);
@@ -448,7 +448,6 @@ export default function DossiersList() {
   const [selectedOrangeImportId, setSelectedOrangeImportId] = useState<string>("");
   const [orangePpdOptions, setOrangePpdOptions] = useState<string[]>([]);
   const [selectedOrangePpd, setSelectedOrangePpd] = useState<string>("");
-  const [onlyOrangeMismatch, setOnlyOrangeMismatch] = useState(false);
   const [expandedOrangeRows, setExpandedOrangeRows] = useState<Set<string>>(new Set());
 
   // Filtres tableau Orange
@@ -466,56 +465,56 @@ export default function DossiersList() {
   // summary (HT/TTC totals)
   const [orangeSummary, setOrangeSummary] = useState<OrangePpdCompareSummary | null>(null);
 
+  // État pour le modal de confirmation de vidage
+  const [showTruncateConfirm, setShowTruncateConfirm] = useState(false);
+  const [isTruncating, setIsTruncating] = useState(false);
+
   // --------- LOAD DOSSIERS ----------
-  const load = useCallback(
-    async (f?: DossiersFilters) => {
-      const activeFilters = f ?? filters;
+const load = useCallback(
+  async (f?: DossiersFilters) => {
+    const activeFilters = f ?? filters;
 
-      const normalized: DossiersFilters = {
-        ...activeFilters,
-        limit: 5000,
-        offset: 0,
-      };
+    // ✅ Nettoyer les filtres avant de les utiliser
+    const normalized: DossiersFilters = {
+      ...activeFilters,
+      limit: 5000,
+      offset: 0,
+      q: activeFilters.q?.replace(/[<>]/g, '') // Supprimer < et >
+    };
 
-      setLoading(true);
-      setError(null);
+    setLoading(true);
+    setError(null);
 
-      try {
-        const data = await listDossiers(normalized);
-        setRawItems(data);
-        setItems(data);
-        setDossiersPage(1);
-        if (f) setFilters(normalized);
-      } catch (e: any) {
-        setRawItems([]);
-        setItems([]);
-        setError(e?.message || "Erreur inconnue");
-      } finally {
-        setLoading(false);
-      }
-    },
-    []
-  );
-
-  useEffect(() => {
-    load({ limit: 5000, offset: 0 });
-  }, [load]);
-
+    try {
+      console.log("🔍 Loading with filters:", normalized); // Debug
+      const data = await listDossiers(normalized);
+      setRawItems(data);
+      setItems(data);
+      setDossiersPage(1);
+      if (f) setFilters(normalized);
+    } catch (e: any) {
+      setRawItems([]);
+      setItems([]);
+      setError(e?.message || "Erreur inconnue");
+    } finally {
+      setLoading(false);
+    }
+  },
+  [filters] // Dépendance à filters
+);
   // --------- LOAD ORANGE ----------
   const loadOrangeComparison = useCallback(
-    async (opts?: { importId?: string; ppd?: string; onlyMismatch?: boolean }) => {
+    async (opts?: { importId?: string; ppd?: string }) => {
       setLoadingOrange(true);
       setError(null);
       try {
         const importId = opts?.importId ?? selectedOrangeImportId;
         const ppd = opts?.ppd ?? selectedOrangePpd;
-        const mismatch = opts?.onlyMismatch ?? onlyOrangeMismatch;
 
         const [rows, imports, ppds, summary] = await Promise.all([
           compareOrangePpd({
             importId,
             ppd: ppd || undefined,
-            onlyMismatch: mismatch,
           }),
           listOrangeImports(30),
           listOrangePpdOptions(importId || undefined),
@@ -542,7 +541,7 @@ export default function DossiersList() {
         setLoadingOrange(false);
       }
     },
-    [selectedOrangeImportId, selectedOrangePpd, onlyOrangeMismatch]
+    [selectedOrangeImportId, selectedOrangePpd]
   );
 
   // --- Valeurs uniques pour filtre croisement ---
@@ -634,7 +633,7 @@ export default function DossiersList() {
     // Récupérer tous les relevés ou OTs manquants
     const missing = orangeRowsFiltered
       .filter((r) => r.reason === "RELEVE_ABSENT_PIDI" || r.reason === "OT_INEXISTANT" || r.reason === "CROISEMENT_INCOMPLET")
-      .map((r) => r.releve || r.num_ot) // On préfère le relevé, sinon num_ot
+      .map((r) => r.releve || r.num_ot)
       .filter(Boolean);
 
     // Enlever les doublons
@@ -650,6 +649,42 @@ export default function DossiersList() {
     
     // Rediriger vers la page scraper
     router.push("/scraper");
+  };
+
+  // 👉 Fonction pour vider toutes les tables (TRUNCATE)
+  const handleTruncateAll = async () => {
+    setIsTruncating(true);
+    try {
+      // Appel API pour exécuter les TRUNCATE
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8100"}/api/admin/truncate-all`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Erreur ${response.status}: ${errorText}`);
+      }
+
+      const result = await response.json();
+      alert(`✅ Tables vidées avec succès !\n${result.message || ""}`);
+      
+      // Recharger les données
+      load({ limit: 5000, offset: 0 });
+      
+      // Recharger les imports Orange
+      listOrangeImports(30).then(setOrangeImports).catch(() => {});
+      
+    } catch (e: any) {
+      setError(e?.message || "Erreur lors du vidage des tables");
+      console.error("Erreur truncate:", e);
+    } finally {
+      setIsTruncating(false);
+      setShowTruncateConfirm(false);
+    }
   };
 
   // --------- EXPORT ORANGE EXCEL ----------
@@ -851,7 +886,17 @@ export default function DossiersList() {
         }
       `}</style>
 
-      <FiltersBar onSearch={(f) => load(f)} loading={loading} statuts={statutsFinal} ppds={ppdOptions} />
+      <FiltersBar 
+        onSearch={(f) => {
+          // ✅ FILTRAGE AUTOMATIQUE - pas besoin de cliquer "Filtrer"
+          const newFilters = { ...filters, ...f, offset: 0 };
+          setFilters(newFilters);
+          load(newFilters);
+        }} 
+        loading={loading} 
+        statuts={statutsFinal} 
+        ppds={ppdOptions} 
+      />
 
       {error && (
         <div className="mx-2 p-2 rounded border border-red-200 bg-red-50 text-sm text-red-700">
@@ -899,20 +944,21 @@ export default function DossiersList() {
             {grouped ? "Vue dossiers" : "Regrouper PPD"}
           </button>
 
+          {/* ✅ Bouton COMMENTAIRE TECH / PALIER - nouvelle couleur violette, déplacé à gauche de Praxedo */}
+          <button
+            onClick={() => setImportType("COMMENTAIRE_TECH")}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded bg-purple-500 text-white hover:bg-purple-600"
+          >
+            <Upload className="h-4 w-4" />
+            Commentaire tech / Palier
+          </button>
+
           <button
             onClick={() => setImportType("PRAXEDO")}
             className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50"
           >
             <Upload className="h-4 w-4" />
             Praxedo
-          </button>
-
-          <button
-            onClick={() => setImportType("PRAXEDO_CR10")}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50"
-          >
-            <Upload className="h-4 w-4" />
-            Praxedo CR10
           </button>
 
           <button
@@ -923,12 +969,15 @@ export default function DossiersList() {
             PIDI
           </button>
 
+          {/* ✅ Nouveau bouton VIDER TOUT */}
           <button
-            onClick={() => setImportType("ORANGE_PPD")}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50"
+            onClick={() => setShowTruncateConfirm(true)}
+            disabled={isTruncating}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-60"
+            title="Vider toutes les tables (Praxedo, PIDI, Orange PPD)"
           >
-            <Upload className="h-4 w-4" />
-            Orange PPD
+            <Trash2 className="h-4 w-4" />
+            {isTruncating ? "Vidage..." : "Vider tout"}
           </button>
 
           <button
@@ -1005,11 +1054,20 @@ export default function DossiersList() {
             </div>
 
             <div className="flex items-center gap-2">
-              {/* Bouton Scraper les manquants */}
+              {/* ✅ Bouton IMPORT ORANGE PPD (orange) */}
+              <button
+                onClick={() => setImportType("ORANGE_PPD")}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded bg-orange-500 text-white hover:bg-orange-600"
+              >
+                <Upload className="h-4 w-4" />
+                Orange PPD
+              </button>
+
+              {/* ✅ Bouton Scraper les manquants (bleu clair) */}
               <button
                 onClick={handleScrapeMissing}
                 disabled={orangeRowsFiltered.length === 0}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-60 text-sm font-medium shadow-sm transition-colors"
+                className="inline-flex items-center gap-2 px-3 py-2 rounded bg-sky-400 text-white hover:bg-sky-500 disabled:opacity-60 text-sm font-medium shadow-sm transition-colors"
                 title="Extraire les relevés manquants depuis Praxedo"
               >
                 <Sparkles className="h-4 w-4" />
@@ -1066,21 +1124,11 @@ export default function DossiersList() {
               ))}
             </select>
 
-            <label className="inline-flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={onlyOrangeMismatch}
-                onChange={(e) => setOnlyOrangeMismatch(e.target.checked)}
-              />
-              API: uniquement à vérifier
-            </label>
-
             <button
               onClick={() =>
                 loadOrangeComparison({
                   importId: selectedOrangeImportId,
                   ppd: selectedOrangePpd,
-                  onlyMismatch: onlyOrangeMismatch,
                 })
               }
               className="inline-flex items-center gap-2 px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
@@ -1397,7 +1445,7 @@ export default function DossiersList() {
                 <th className="p-3">Croisement</th>
                 <th className="p-3">Praxedo</th>
                 <th className="p-3">PIDI</th>
-                <th className="p-3">Palier</th> {/* ✅ NOUVELLE COLONNE */}
+                <th className="p-3">Palier</th>
                 <th className="p-3">Actions</th>
                 <th className="p-3">Planifiée</th>
                 <th className="p-3"></th>
@@ -1731,7 +1779,6 @@ export default function DossiersList() {
                       )
                     }
                   />
-                  {/* ✅ NOUVEAUX CHAMPS */}
                   <KeyValue
                     k="Palier"
                     v={
@@ -1935,6 +1982,50 @@ export default function DossiersList() {
               <div className="text-xs text-gray-500">ESC pour fermer</div>
               <button onClick={closeDrawer} className="border rounded px-3 py-2 hover:bg-gray-50">
                 Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de confirmation pour le vidage des tables */}
+      {showTruncateConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowTruncateConfirm(false)} />
+          <div className="relative bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">⚠️ Confirmation de vidage</h3>
+            <div className="space-y-4">
+              <p className="text-sm text-gray-700">
+                Êtes-vous sûr de vouloir vider les tables suivantes ?
+              </p>
+              <pre className="bg-gray-50 p-4 rounded text-xs font-mono overflow-auto max-h-64">
+                TRUNCATE TABLE raw.praxedo RESTART IDENTITY CASCADE;
+                {"\n"}TRUNCATE TABLE raw.pidi RESTART IDENTITY CASCADE;
+                {"\n"}-- 🔸 Nettoyer les données normalisées (NORM)
+                {"\n"}TRUNCATE TABLE norm.praxedo_norm RESTART IDENTITY CASCADE;
+                {"\n"}-- 🔸 Nettoyer les données croisées (CANONIQUE)
+                {"\n"}TRUNCATE TABLE canonique.orange_ppd_imports RESTART IDENTITY CASCADE;
+                {"\n"}TRUNCATE TABLE canonique.orange_ppd_rows RESTART IDENTITY CASCADE;
+                {"\n"}TRUNCATE TABLE canonique.orange_ppd_excel_imports RESTART IDENTITY CASCADE;
+                {"\n"}TRUNCATE TABLE canonique.orange_ppd_excel_rows RESTART IDENTITY CASCADE;
+              </pre>
+              <p className="text-sm text-red-600 font-medium">
+                Cette action est irréversible ! Toutes les données seront définitivement supprimées.
+              </p>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setShowTruncateConfirm(false)}
+                className="px-4 py-2 border rounded hover:bg-gray-50"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={handleTruncateAll}
+                disabled={isTruncating}
+                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-60"
+              >
+                {isTruncating ? "Vidage en cours..." : "Confirmer le vidage"}
               </button>
             </div>
           </div>

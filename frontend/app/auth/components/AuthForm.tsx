@@ -1,3 +1,4 @@
+//frontend/app/auth/components/AuthForm.tsx
 "use client";
 import React, { useState } from 'react';
 import { AuthLayout } from '../layouts/AuthLayout';
@@ -21,7 +22,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onLoginSuccess }) => {
 
     try {
       const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
-      const url = `http://127.0.0.1:8000${endpoint}`;
+      const url = `http://127.0.0.1:8100${endpoint}`;
 
       let options: RequestInit = {};
 
