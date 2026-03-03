@@ -9,7 +9,7 @@ import uuid
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -181,13 +181,39 @@ def _is_xlsx(filename: str | None, content: bytes) -> bool:
 # --------------------
 # CSV import (phase 1) - inchangé
 # --------------------
-def _import_csv_ppd(db: Session, file: UploadFile, content: bytes, imported_by: str | None):
+def _detect_csv_delimiter(txt: str, delimiter_hint: str | None = None) -> str:
+    allowed = {";", ",", "\t", "|"}
+    if delimiter_hint in allowed:
+        return delimiter_hint
+
+    lines = [ln for ln in txt.splitlines() if ln.strip()]
+    sample = "\n".join(lines[:20])
+
+    if sample:
+        try:
+            sniffed = csv.Sniffer().sniff(sample, delimiters=";,\t|")
+            if sniffed.delimiter in allowed:
+                return sniffed.delimiter
+        except Exception:
+            pass
+
+    first = lines[0] if lines else ""
+    counts = {d: first.count(d) for d in (";", ",", "\t", "|")}
+    return max(counts, key=counts.get) if any(counts.values()) else ";"
+
+
+def _import_csv_ppd(
+    db: Session,
+    file: UploadFile,
+    content: bytes,
+    imported_by: str | None,
+    delimiter_hint: str | None = None,
+):
     txt = content.decode("utf-8-sig", errors="ignore")
     if not txt.strip():
         raise HTTPException(status_code=400, detail="Fichier vide")
 
-    first = txt.splitlines()[0] if txt.splitlines() else ""
-    delimiter = ";" if first.count(";") >= first.count(",") else ","
+    delimiter = _detect_csv_delimiter(txt, delimiter_hint=delimiter_hint)
 
     reader = csv.DictReader(io.StringIO(txt), delimiter=delimiter)
     if not reader.fieldnames:
@@ -444,6 +470,7 @@ def _import_excel_ppd(db: Session, file: UploadFile, content: bytes, imported_by
 @router.post("/import")
 async def import_orange_ppd(
     file: UploadFile = File(...),
+    delimiter: str | None = Form(default=None),
     imported_by: str | None = Query(None),
     sheet: str | None = Query(None),
     db: Session = Depends(get_db),
@@ -456,7 +483,7 @@ async def import_orange_ppd(
         payload = (
             _import_excel_ppd(db, file, content, imported_by, sheet)
             if _is_xlsx(file.filename, content)
-            else _import_csv_ppd(db, file, content, imported_by)
+            else _import_csv_ppd(db, file, content, imported_by, delimiter_hint=delimiter)
         )
 
         db.commit()
