@@ -2,9 +2,9 @@
 
 import { normalizeString, extractPalierFromEvenements } from '../utils/stringUtils';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8100";
 
-// ✅ NOUVEAU: Helper bach njbdo l'token w nzido f l'Headers
+// Helper pour ajouter le token d'authentification
 function getAuthHeaders(): HeadersInit {
   if (typeof window !== "undefined") {
     const token = localStorage.getItem("token");
@@ -13,6 +13,57 @@ function getAuthHeaders(): HeadersInit {
     }
   }
   return {};
+}
+
+/* =========================
+   HELPER: Normalisation NDS
+========================= */
+
+/**
+ * Convertit les nds (array PostgreSQL ou string) en texte affichable
+ */
+export function ndsToText(nds: string[] | string | null | undefined): string {
+  if (!nds) return "";
+
+  // Cas 1: déjà un array
+  if (Array.isArray(nds)) {
+    return nds.filter(Boolean).join(" | ");
+  }
+
+  // Cas 2: string PostgreSQL "{a,b,c}"
+  const s = String(nds).trim();
+  if (!s) return "";
+  
+  if (s.startsWith("{") && s.endsWith("}")) {
+    return s
+      .slice(1, -1)
+      .split(",")
+      .map(x => x.trim())
+      .filter(Boolean)
+      .join(" | ");
+  }
+
+  // Cas 3: string normale
+  return s;
+}
+
+/**
+ * Helper pour obtenir la valeur à afficher dans la colonne "Relevé / ND"
+ */
+export function getReleveOrNdValue(row: any): string {
+  // Si releve existe et n'est pas vide, l'utiliser
+  if (row.releve && typeof row.releve === 'string' && row.releve.trim()) {
+    return row.releve.trim();
+  }
+  
+  // Sinon, utiliser nds normalisé
+  const ndText = ndsToText(row.nds);
+  if (ndText) {
+    return ndText;
+  }
+  
+  // Fallback
+  return "—";
 }
 
 /* =========================
@@ -81,13 +132,17 @@ export interface DossierFacturable {
   statut_article?: string | null;
   statut_article_vs_regle?: string | null;
   
-  // ✅ Champs existants
+  // Champs existants
   palier: string | null;
   
-  // ✅ NOUVEAUX CHAMPS
+  // Nouveaux champs
   palier_phrase?: string | null;
   evenements?: string | null;
   compte_rendu?: string | null;
+  
+  // Champs Orange PPD (Excel)
+  releve?: string | null;
+  nds?: string[] | string | null;
 }
 
 export const statutsFinal = ["FACTURABLE", "NON_FACTURABLE", "A_VERIFIER", "CONDITIONNEL"] as const;
@@ -109,26 +164,42 @@ function buildParams(filters: DossiersFilters) {
   const croisement = cleanValue(filters.statut_croisement);
   const ppd = cleanValue(filters.ppd);
 
+  // ✅ Utiliser set() qui ajoute correctement "="
   if (q) params.set("q", q);
   if (statut) params.set("statut", statut);
   if (croisement) params.set("croisement", croisement);
   if (ppd) params.set("ppd", ppd);
 
-  if (typeof filters.limit === "number") params.set("limit", String(filters.limit));
-  if (typeof filters.offset === "number") params.set("offset", String(filters.offset));
+  // ✅ S'assurer que ce sont des nombres valides
+  if (typeof filters.limit === "number" && !isNaN(filters.limit)) {
+    params.set("limit", String(filters.limit));
+  }
+  if (typeof filters.offset === "number" && !isNaN(filters.offset)) {
+    params.set("offset", String(filters.offset));
+  }
 
   return params;
 }
 
 export async function listDossiers(filters: DossiersFilters = {}): Promise<DossierFacturable[]> {
-  const params = buildParams(filters);
+  // ✅ Nettoyer les filtres pour éviter les caractères spéciaux
+  const cleanFilters = {
+    ...filters,
+    q: filters.q?.replace(/[<>]/g, ''), // Supprimer < et >
+    limit: filters.limit || 5000,
+    offset: filters.offset || 0
+  };
+
+  const params = buildParams(cleanFilters);
   const qs = params.toString();
   const url = `${API_URL}/api/dossiers/${qs ? `?${qs}` : ""}`;
+
+  console.log("📥 Fetching dossiers:", url); // Pour debug
 
   const response = await fetch(url, { 
     method: "GET",
     headers: {
-      ...getAuthHeaders(), // ✅ NOUVEAU
+      ...getAuthHeaders(),
     }
   });
   if (!response.ok) {
@@ -146,15 +217,14 @@ function extractFilenameFromContentDisposition(contentDisposition: string | null
   
   // Plusieurs patterns possibles
   const patterns = [
-    /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/,  // Pattern standard
-    /filename="([^"]+)"/,                      // filename="..."
-    /filename=([^;]+)/,                          // filename=...
+    /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/,
+    /filename="([^"]+)"/,
+    /filename=([^;]+)/,
   ];
   
   for (const pattern of patterns) {
     const match = contentDisposition.match(pattern);
     if (match) {
-      // Nettoyer le nom de fichier
       let filename = match[1] || match[2] || match[0];
       filename = filename.replace(/['"]/g, '').trim();
       if (filename) return filename;
@@ -178,7 +248,7 @@ export async function exportDossiersXlsx(filters: DossiersFilters = {}): Promise
     method: "GET",
     headers: { 
       Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      ...getAuthHeaders(), // ✅ NOUVEAU
+      ...getAuthHeaders(),
     },
   });
 
@@ -188,26 +258,20 @@ export async function exportDossiersXlsx(filters: DossiersFilters = {}): Promise
     throw new Error(`Erreur ${response.status}: ${errorText}`);
   }
 
-  // Récupérer le blob
   const blob = await response.blob();
   
-  // Vérifier que c'est bien un fichier Excel
   if (blob.size === 0) {
     throw new Error("Le fichier Excel est vide");
   }
 
-  // Créer l'URL de téléchargement
   const downloadUrl = window.URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = downloadUrl;
 
-  // Déterminer le nom du fichier
   const contentDisposition = response.headers.get("Content-Disposition");
   let filename = extractFilenameFromContentDisposition(contentDisposition);
   
-  // Fallback si pas de nom ou nom invalide
   if (!filename || !filename.endsWith('.xlsx')) {
-    // Construire un nom de fichier par défaut avec la date
     const date = new Date().toISOString().split('T')[0];
     filename = `dossiers_export_${date}.xlsx`;
   }
@@ -219,7 +283,6 @@ export async function exportDossiersXlsx(filters: DossiersFilters = {}): Promise
   link.click();
   document.body.removeChild(link);
   
-  // Nettoyer l'URL
   setTimeout(() => {
     window.URL.revokeObjectURL(downloadUrl);
   }, 100);
@@ -269,7 +332,7 @@ export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvRes
       body: formData, 
       signal,
       headers: {
-        ...getAuthHeaders(), // ✅ NOUVEAU
+        ...getAuthHeaders(),
       }
     });
 
@@ -314,7 +377,7 @@ export interface OrangePpdImportSummary {
   // Excel-only
   sheet_name?: string | null;
 
-  // pour l'UI (facultatif)
+  // pour l'UI
   kind?: "CSV" | "XLSX";
 }
 
@@ -347,10 +410,10 @@ export type OrangePpdComparison = {
   croisement_complet?: boolean | null;
   reason?: string | null;
 
-  // Nouveaux champs (XLSX relevé par relevé)
+  // Champs XLSX (relevé par relevé)
   releve?: string | null;
 
-  // nds peut venir comme array Postgres (text[]) ou string (selon sérialisation)
+  // nds peut venir comme array Postgres (text[]) ou string
   nds?: string[] | string | null;
 
   // OT réel PIDI si ajouté au back
@@ -369,7 +432,7 @@ export async function uploadOrangePpdExcel(file: File): Promise<ImportCsvResult>
     method: "POST",
     body: formData,
     headers: {
-      ...getAuthHeaders(), // ✅ NOUVEAU
+      ...getAuthHeaders(),
     }
   });
 
@@ -382,28 +445,48 @@ export async function uploadOrangePpdExcel(file: File): Promise<ImportCsvResult>
 }
 
 /**
- * CSV + XLSX merged list.
+ * ✅ PATCH FRONT (recommandé) : un seul fetch, un seul tableau
+ * CSV + XLSX merged list - version optimisée avec un seul appel API
  */
-export async function listOrangeImports(limit = 20): Promise<OrangePpdImportSummary[]> {
-  const [csvRes, xlsxRes] = await Promise.all([
-    fetch(`${API_URL}/api/orange-ppd/imports?limit=${limit}`, { headers: getAuthHeaders() }), // ✅ NOUVEAU
-    fetch(`${API_URL}/api/orange-ppd/excel-imports?limit=${limit}`, { headers: getAuthHeaders() }), // ✅ NOUVEAU
-  ]);
+export async function listOrangeImports(limit = 30): Promise<OrangePpdImportSummary[]> {
+  // Un seul appel API qui renvoie déjà les données fusionnées et triées
+  const res = await fetch(`${API_URL}/api/orange-ppd/imports?limit=${limit}`, {
+    cache: "no-store",
+    headers: getAuthHeaders(),
+  });
+  
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+  
+  return res.json(); // => merged CSV + XLSX (déjà trié et limité)
+}
 
-  if (!csvRes.ok) throw new Error(`Erreur ${csvRes.status}: ${await csvRes.text()}`);
-  if (!xlsxRes.ok) throw new Error(`Erreur ${xlsxRes.status}: ${await xlsxRes.text()}`);
+/**
+ * ⚠️ Gardée pour compatibilité avec d'anciennes pages, mais NE PLUS UTILISER
+ * dans la page de comparaison.
+ */
+export async function listOrangeExcelImports(limit = 30): Promise<OrangePpdImportSummary[]> {
+  const res = await fetch(`${API_URL}/api/orange-ppd/excel-imports?limit=${limit}`, {
+    cache: "no-store",
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const data = await res.json();
+  return data.map((x: any) => ({ ...x, kind: "XLSX" as const }));
+}
 
-  const csv = (await csvRes.json()) as OrangePpdImportSummary[];
-  const xlsx = (await xlsxRes.json()) as OrangePpdImportSummary[];
-
-  const merged: OrangePpdImportSummary[] = [
-    ...csv.map((x) => ({ ...x, kind: "CSV" as const })),
-    ...xlsx.map((x) => ({ ...x, kind: "XLSX" as const })),
-  ];
-
-  merged.sort((a, b) => String(b.imported_at || "").localeCompare(String(a.imported_at || "")));
-
-  return merged.slice(0, limit);
+/**
+ * Helper de dédoublonnage par import_id (anti-doublon)
+ * À utiliser dans le setState si nécessaire
+ */
+export function dedupeByImportId(items: any[]) {
+  const m = new Map<string, any>();
+  for (const it of items || []) {
+    if (!it?.import_id) continue;
+    if (!m.has(it.import_id)) m.set(it.import_id, it);
+  }
+  return Array.from(m.values());
 }
 
 export async function listOrangePpdOptions(importId?: string): Promise<string[]> {
@@ -411,7 +494,7 @@ export async function listOrangePpdOptions(importId?: string): Promise<string[]>
   if (importId) qs.set("import_id", importId);
 
   const response = await fetch(`${API_URL}/api/orange-ppd/ppd-options${qs.toString() ? `?${qs}` : ""}`, {
-    headers: getAuthHeaders(), // ✅ NOUVEAU
+    headers: getAuthHeaders(),
   });
   if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
   return response.json();
@@ -426,7 +509,7 @@ export async function compareOrangePpd(
   if (params.onlyMismatch) qs.set("only_mismatch", "true");
 
   const response = await fetch(`${API_URL}/api/orange-ppd/compare${qs.toString() ? `?${qs}` : ""}`, {
-    headers: getAuthHeaders(), // ✅ NOUVEAU
+    headers: getAuthHeaders(),
   });
   if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
   return response.json();
@@ -440,7 +523,7 @@ export async function compareOrangePpdSummary(
   if (params.ppd?.trim()) qs.set("ppd", params.ppd.trim());
 
   const res = await fetch(`${API_URL}/api/orange-ppd/compare-summary${qs.toString() ? `?${qs}` : ""}`, {
-    headers: getAuthHeaders(), // ✅ NOUVEAU
+    headers: getAuthHeaders(),
   });
   if (!res.ok) throw new Error(`Erreur ${res.status}: ${await res.text()}`);
   return res.json();

@@ -3,8 +3,10 @@ import time
 import json
 import platform
 import random
+import os
 from datetime import datetime
 from typing import List
+
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -19,82 +21,131 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
-from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
+from selenium.common.exceptions import TimeoutException, StaleElementReferenceException, WebDriverException
 
 from core.config import get_settings
 from database.connection import get_db
 from models.raw_praxedo_cr10 import RawPraxedoCr10
 from routes.imports import _extract_palier_from_evenements
 
-# --- NOUVEAU: Import dyal l'Auth ---
+# --- Auth ---
 from routes.auth import get_current_user
 from models.user import User
-# -----------------------------------
 
 router = APIRouter(prefix="/api/scraper", tags=["scraper"])
+
 
 class ScrapeRequest(BaseModel):
     releves: List[str]
 
-# Payload l'insertion fel DB direct b3d l'scrap
+
 class ScrapedItem(BaseModel):
     ot: str
     nd: str | None = None
     compte_rendu: str | None = None
     evenements: str | None = None
 
-def human_typing(element, text):
-    # Ktba zrebna fiha chwiya (bhal copy-paste rapide awla wahed kaykteb bzerba)
-    for char in text:
+
+def human_typing(element, text: str):
+    for char in (text or ""):
         element.send_keys(char)
         time.sleep(random.uniform(0.01, 0.04))
 
-def scrape_generator(releves: List[str], user: str, password: str):
-    LOGIN_URL = "https://auth.praxedo.com/oauth2/default/v1/authorize?response_type=code&client_id=0oa81c5o3hBGZtAPF417&scope=openid%20profile%20etech&state=Y04QT2yAPF9AUn3hmp2a-EioA_Ddw-WYupohnb2vsxQ%3D&redirect_uri=https://eu5.praxedo.com/eTech/login/oauth2/code/okta&nonce=Ae4aI3FPlBAE0MiCYIQKreokC6z01IxrKPvW3istXr4"
 
-    is_mac = platform.system() == 'Darwin'
-    cmd_ctrl = Keys.COMMAND if is_mac else Keys.CONTROL
+def _build_driver() -> webdriver.Remote:
+    """
+    ✅ Driver Remote vers selenium/standalone-chrome
+    - Utilise SELENIUM_REMOTE_URL si présent
+    - Sinon fallback sur http://selenium:4444/wd/hub
+    """
+    settings = get_settings()
+    remote_url = (
+        getattr(settings, "SELENIUM_REMOTE_URL", None)
+        or os.getenv("SELENIUM_REMOTE_URL")
+        or "http://selenium:4444/wd/hub"
+    )
 
     chrome_options = Options()
-    # chrome_options.add_argument("--headless") 
+
+    # Important pour tourner en container / selenium grid
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    # Anti-detection flags
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled") 
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"]) 
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-    
-    driver = webdriver.Chrome(options=chrome_options)
-    
-    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-        "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-    })
 
-    driver.maximize_window()
-    # Nqesna mn 40s l 15s hit wifi mzyan
-    wait = WebDriverWait(driver, 15)
-    action = ActionChains(driver)
+    # Headless recommandé côté selenium container
+    # (si tu veux voir visuellement, supprime cette ligne et expose le VNC du container selenium)
+    chrome_options.add_argument("--headless=new")
+
+    # Anti-detection flags (tu peux garder)
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option("useAutomationExtension", False)
+    chrome_options.add_argument(
+        "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    )
 
     try:
-        yield json.dumps({"status": "info", "message": "Demarrage du navigateur Chrome (Rapide)..."}) + "\n"
-        
+        driver = webdriver.Remote(
+            command_executor=remote_url,
+            options=chrome_options,
+        )
+    except Exception as e:
+        raise WebDriverException(f"Impossible de se connecter à Selenium Remote: {remote_url} | {e}")
+
+    return driver
+
+
+def scrape_generator(releves: List[str], user: str, password: str):
+    LOGIN_URL = (
+        "https://auth.praxedo.com/oauth2/default/v1/authorize?"
+        "response_type=code&client_id=0oa81c5o3hBGZtAPF417"
+        "&scope=openid%20profile%20etech&state=Y04QT2yAPF9AUn3hmp2a-EioA_Ddw-WYupohnb2vsxQ%3D"
+        "&redirect_uri=https://eu5.praxedo.com/eTech/login/oauth2/code/okta"
+        "&nonce=Ae4aI3FPlBAE0MiCYIQKreokC6z01IxrKPvW3istXr4"
+    )
+
+    is_mac = platform.system() == "Darwin"
+    cmd_ctrl = Keys.COMMAND if is_mac else Keys.CONTROL
+
+    driver = None
+    try:
+        yield json.dumps({"status": "info", "message": "Connexion à Selenium (Remote Chrome)..."}) + "\n"
+        driver = _build_driver()
+
+        # ⚠️ En Remote, certaines commandes CDP peuvent ne pas être dispo => try/except
+        try:
+            driver.execute_cdp_cmd(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"},
+            )
+        except Exception:
+            pass
+
+        # maximize_window parfois non supporté en headless remote => try/except
+        try:
+            driver.maximize_window()
+        except Exception:
+            pass
+
+        wait = WebDriverWait(driver, 15)
+        action = ActionChains(driver)
+
+        yield json.dumps({"status": "info", "message": "Ouverture de la page login..."}) + "\n"
         driver.get(LOGIN_URL)
         time.sleep(random.uniform(0.5, 1.0))
-        
+
         user_input = wait.until(EC.visibility_of_element_located((By.NAME, "identifier")))
         human_typing(user_input, user)
         user_input.send_keys(Keys.RETURN)
-        
+
         time.sleep(random.uniform(1.0, 1.5))
-        
+
         pwd_input = wait.until(EC.visibility_of_element_located((By.NAME, "credentials.passcode")))
         human_typing(pwd_input, password)
         pwd_input.send_keys(Keys.RETURN)
-        
+
         yield json.dumps({"status": "info", "message": "Login en cours... attente redirection."}) + "\n"
-        
-        # HNA ZREBNAH: F blast 8 secondes, kantsennaw l'menu yban (Smart Wait)
+
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='AdvancedSearchWorkOrder.do']")))
         time.sleep(0.5)
 
@@ -102,94 +153,99 @@ def scrape_generator(releves: List[str], user: str, password: str):
         time.sleep(0.5)
         wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "a[href*='displayInvoiceSearch.do']"))).click()
 
-        yield json.dumps({"status": "info", "message": "Debut du traitement..."}) + "\n"
+        yield json.dumps({"status": "info", "message": "Début du traitement..."}) + "\n"
 
         for i, releve in enumerate(releves):
-            if not releve.strip():
+            if not (releve or "").strip():
                 continue
-                
-            yield json.dumps({"status": "progress", "releve": releve, "message": f"[{i+1}/{len(releves)}] Traitement: {releve} ..."}) + "\n"
-            
+
+            yield json.dumps(
+                {"status": "progress", "releve": releve, "message": f"[{i+1}/{len(releves)}] Traitement: {releve} ..."}
+            ) + "\n"
+
             try:
-                # 1. NAVIGATION RESET (Zerbana)
+                # 1) Navigation reset
                 try:
-                    submenu_btn = WebDriverWait(driver, 2).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "a[href*='displayInvoiceSearch.do']")))
+                    submenu_btn = WebDriverWait(driver, 2).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, "a[href*='displayInvoiceSearch.do']"))
+                    )
                     submenu_btn.click()
-                except:
+                except Exception:
                     menu_btn = driver.find_element(By.CSS_SELECTOR, "a[href*='AdvancedSearchWorkOrder.do']")
                     menu_btn.click()
                     time.sleep(0.5)
-                    submenu_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "a[href*='displayInvoiceSearch.do']")))
+                    submenu_btn = wait.until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, "a[href*='displayInvoiceSearch.do']"))
+                    )
                     submenu_btn.click()
-                
-                time.sleep(0.5) 
 
-                # 2. INPUTS
+                time.sleep(0.5)
+
+                # 2) Inputs
                 date_input = wait.until(EC.visibility_of_element_located((By.NAME, "minCreationDateStr")))
                 driver.execute_script("arguments[0].value = '';", date_input)
                 date_input.click()
-                date_input.send_keys(cmd_ctrl + "a") 
+                date_input.send_keys(cmd_ctrl + "a")
                 date_input.send_keys(Keys.BACK_SPACE)
                 date_input.send_keys(Keys.TAB)
 
                 textarea = wait.until(EC.visibility_of_element_located((By.NAME, "commentaireNotification")))
                 textarea.clear()
-                textarea.send_keys(releve) 
-                
-                # 3. RECHERCHE
+                textarea.send_keys(releve)
+
+                # 3) Recherche
                 time.sleep(random.uniform(0.2, 0.5))
                 driver.find_element(By.ID, "searchBottom").click()
-                
-                # Attente 1.5s max l'tableau yrepondi
-                time.sleep(1.5) 
 
-                # VERIFICATION RAPIDE (Fast-Fail)
+                time.sleep(1.5)
+
                 empty_rows = driver.find_elements(By.CSS_SELECTOR, "tbody.pure-datatable-data tr")
                 if empty_rows and "Aucune facture" in empty_rows[0].text:
                     yield json.dumps({"status": "error", "releve": releve, "message": "Walou (Aucune facture). Suivant !"}) + "\n"
-                    continue 
+                    continue
                 elif not empty_rows:
                     yield json.dumps({"status": "error", "releve": releve, "message": "Tableau vide. Suivant !"}) + "\n"
                     continue
 
-                yield json.dumps({"status": "info", "message": "Facture trouvee ! Filtre rapide..."}) + "\n"
+                yield json.dumps({"status": "info", "message": "Facture trouvée ! Filtre rapide..."}) + "\n"
 
-                # 4. FILTRER (Zerbana)
+                # 4) Filtrer colonnes (best effort)
                 try:
                     filter_btn = WebDriverWait(driver, 2).until(EC.element_to_be_clickable((By.ID, "filterColumns")))
                     filter_btn.click()
                     time.sleep(0.5)
-                    
+
                     select_box = wait.until(EC.visibility_of_element_located((By.NAME, "invoice_list_columns")))
-                    action.move_to_element(select_box).click().key_down(cmd_ctrl).send_keys('a').key_up(cmd_ctrl).perform()
+                    action.move_to_element(select_box).click().key_down(cmd_ctrl).send_keys("a").key_up(cmd_ctrl).perform()
                     time.sleep(0.2)
-                    
-                    move_right_btn = driver.find_element(By.XPATH, "//button[descendant::i[contains(@class,'icon-caret-right')]]")
+
+                    move_right_btn = driver.find_element(
+                        By.XPATH, "//button[descendant::i[contains(@class,'icon-caret-right')]]"
+                    )
                     move_right_btn.click()
                     time.sleep(0.2)
-                    
+
                     apply_btn = driver.find_element(By.ID, "applyColumnFilter")
                     apply_btn.click()
-                    
-                    # 2s kafiin bach y-chargi 46 colonne f la connexion saro5
-                    time.sleep(2) 
+
+                    time.sleep(2)
                 except Exception:
                     pass
 
-                # 5. SCRAPING
+                # 5) Scraping
                 wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "tbody.pure-datatable-data tr")))
                 rows = driver.find_elements(By.CSS_SELECTOR, "tbody.pure-datatable-data tr")
+
                 found = False
-                
                 if rows:
                     if "Aucune facture" in rows[0].text:
-                        yield json.dumps({"status": "error", "releve": releve, "message": "Aucun resultat."}) + "\n"
+                        yield json.dumps({"status": "error", "releve": releve, "message": "Aucun résultat."}) + "\n"
                     else:
                         count = 0
                         for row in rows:
                             try:
                                 cells = row.find_elements(By.TAG_NAME, "td")
-                                if len(cells) > 5: 
+                                if len(cells) > 5:
                                     row_data = [cell.text.strip().replace("\n", " ") for cell in cells[1:]]
                                     yield json.dumps({"status": "result", "releve": releve, "data": row_data}) + "\n"
                                     count += 1
@@ -198,83 +254,91 @@ def scrape_generator(releves: List[str], user: str, password: str):
                                 continue
                             except Exception:
                                 continue
-                        
+
                         if found:
-                            yield json.dumps({"status": "info", "message": f"Trouve ({count} lignes)."}) + "\n"
+                            yield json.dumps({"status": "info", "message": f"Trouvé ({count} lignes)."}) + "\n"
                         else:
                             yield json.dumps({"status": "error", "releve": releve, "message": "Tableau vide."}) + "\n"
                 else:
-                    yield json.dumps({"status": "error", "releve": releve, "message": "Aucun resultat."}) + "\n"
+                    yield json.dumps({"status": "error", "releve": releve, "message": "Aucun résultat."}) + "\n"
 
             except TimeoutException:
                 yield json.dumps({"status": "error", "releve": releve, "message": "Timeout."}) + "\n"
             except Exception as e:
                 yield json.dumps({"status": "error", "releve": releve, "message": str(e)}) + "\n"
-                
-            # Repos sghir bin relevé w relevé (0.3 a 0.8s c'est suffisant pour le stealth f l'action repetée)
+
             time.sleep(random.uniform(0.3, 0.8))
 
     except TimeoutException:
-        yield json.dumps({"status": "fatal", "message": "La page a pris trop de temps a charger."}) + "\n"
+        yield json.dumps({"status": "fatal", "message": "La page a pris trop de temps à charger."}) + "\n"
     except Exception as global_e:
         yield json.dumps({"status": "fatal", "message": f"Erreur critique: {str(global_e)}"}) + "\n"
     finally:
-        yield json.dumps({"status": "done", "message": "Scraping termine ! Navigateur ferme."}) + "\n"
-        driver.quit()
+        yield json.dumps({"status": "done", "message": "Scraping terminé ! Navigateur fermé."}) + "\n"
+        try:
+            if driver:
+                driver.quit()
+        except Exception:
+            pass
+
 
 @router.post("")
 def run_scraper(
     req: ScrapeRequest,
-    current_user: User = Depends(get_current_user) # <-- 🔒 Sécurisé
+    current_user: User = Depends(get_current_user),  # 🔒 Sécurisé
 ):
     settings = get_settings()
     user = getattr(settings, "PRAXEDO_USER", None)
     pwd = getattr(settings, "PRAXEDO_PASSWORD", None)
-    
+
     if not user or not pwd:
-        raise HTTPException(status_code=500, detail="Identifiants Praxedo non configures")
-    
+        raise HTTPException(status_code=500, detail="Identifiants Praxedo non configurés")
+
     return StreamingResponse(
         scrape_generator(req.releves, user, pwd),
-        media_type="application/x-ndjson"
+        media_type="application/x-ndjson",
     )
 
-# --- NOUVEAU: Sauvegarder les données scrapées (Compte rendu/Evenement) direct f l'DB ---
+
 @router.post("/save")
 def save_scraped_data(
-    items: List[ScrapedItem], 
+    items: List[ScrapedItem],
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user) # <-- 🔒 Sécurisé
+    current_user: User = Depends(get_current_user),  # 🔒 Sécurisé
 ):
     if not items:
         return {"ok": True, "saved": 0}
-        
+
     now = datetime.utcnow()
     rows_list = []
-    
+
     for item in items:
-        if not item.ot: 
+        if not item.ot:
             continue
-            
+
         palier = _extract_palier_from_evenements(item.evenements) if item.evenements else None
-        
-        rows_list.append({
-            "id_externe": item.ot,
-            "nom_site": item.nd,
-            "compte_rendu": item.compte_rendu,
-            "evenements": item.evenements,
-            "palier": palier,
-            "imported_at": now,
-            "user_id": current_user.id # <-- 🏢 Multi-tenant
-        })
-        
+
+        rows_list.append(
+            {
+                "id_externe": item.ot,
+                "nom_site": item.nd,
+                "compte_rendu": item.compte_rendu,
+                "evenements": item.evenements,
+                "palier": palier,
+                "imported_at": now,
+                "user_id": current_user.id,
+            }
+        )
+
     if not rows_list:
         return {"ok": True, "saved": 0}
-        
+
     try:
         t = RawPraxedoCr10.__table__
         stmt = pg_insert(t).values(rows_list)
-        
+
+        # ⚠️ Si ton unique index est sur id_externe uniquement, ça va.
+        # Si tu veux multi-tenant propre: index unique (user_id, id_externe)
         stmt = stmt.on_conflict_do_update(
             index_elements=[t.c.id_externe],
             set_={
@@ -286,7 +350,7 @@ def save_scraped_data(
                 "user_id": stmt.excluded.user_id,
             },
         )
-        
+
         db.execute(stmt)
         db.commit()
         return {"ok": True, "saved": len(rows_list)}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 
 type Props = {
   onSearch: (filters: {
@@ -22,6 +22,15 @@ export default function FiltersBar({ onSearch, loading = false, statuts, ppds }:
 
   const ppdOptions = useMemo(() => Array.from(new Set(ppds)).sort((a, b) => a.localeCompare(b)), [ppds]);
 
+  // ✅ RECHERCHE AUTOMATIQUE avec debounce
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      submit();
+    }, 500); // 500ms de délai pour éviter trop d'appels
+
+    return () => clearTimeout(timeoutId);
+  }, [q, ppd, statutFinal, croisement]);
+
   function submit() {
     onSearch({
       q: q.trim() || undefined,
@@ -36,7 +45,7 @@ export default function FiltersBar({ onSearch, loading = false, statuts, ppds }:
     setPpd("");
     setStatutFinal("");
     setCroisement("");
-    onSearch({});
+    // Le useEffect va automatiquement appeler submit()
   }
 
   return (
@@ -50,9 +59,6 @@ export default function FiltersBar({ onSearch, loading = false, statuts, ppds }:
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") submit();
-              }}
               placeholder="Ex: 0142019878…"
               className="h-9 w-full rounded-md border bg-white pl-8 pr-3 text-sm outline-none focus:ring-2 focus:ring-blue-200"
             />

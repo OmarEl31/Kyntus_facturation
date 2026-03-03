@@ -1,5 +1,7 @@
 # Backend/main.py
 from fastapi import FastAPI
+from routes import api_router
+
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import get_settings
@@ -13,6 +15,7 @@ from routes.debug_db import router as debug_router
 from routes.orange_ppd import router as orange_ppd_router
 from routes.praxedo_scraper import router as praxedo_scraper_router
 from routes.auth import router as auth_router  # <-- Router dyal l'Auth jdid
+from routes.admin import router as admin_router
 
 # Hada kay-creyer ay table jdida (bhal 'users') f PostgreSQL ila makantch
 Base.metadata.create_all(bind=engine)
@@ -52,6 +55,8 @@ app.include_router(regles_router)
 app.include_router(debug_router)
 app.include_router(orange_ppd_router)
 app.include_router(praxedo_scraper_router)
+app.include_router(admin_router)
+app.include_router(api_router)
 
 @app.get("/")
 def root():

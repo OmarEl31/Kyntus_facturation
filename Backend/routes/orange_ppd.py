@@ -1,4 +1,4 @@
-# Backend/routes/orange_ppd.py
+# backend/src/routes/orange_ppd.py
 from __future__ import annotations
 
 import csv
@@ -17,11 +17,6 @@ from database.connection import get_db
 from models.raw_orange_ppd_import import RawOrangePpdImport
 from models.raw_orange_ppd_row import RawOrangePpdRow
 from models.raw_orange_ppd_pivot_row import RawOrangePpdPivotRow
-
-# --- NOUVEAU: Auth ---
-from routes.auth import get_current_user
-from models.user import User
-# ---------------------
 
 router = APIRouter(prefix="/api/orange-ppd", tags=["orange-ppd"])
 
@@ -83,45 +78,16 @@ def _norm_ot(v: str | None) -> str | None:
         return s2 if s2 != "" else "0"
     return s
 
-# --- MODIFIÉ: On vérifie que l'import appartient à l'user ---
-def _resolve_import_id(db: Session, import_id: str | None, current_user_id: int) -> str | None:
-    if import_id:
-        # Sécurité: vérifier que l'import appartient à l'user
-        csv_imp = db.query(RawOrangePpdImport).filter_by(import_id=import_id, user_id=current_user_id).first()
-        if csv_imp: 
-            return import_id
-            
-        exc_imp = db.execute(
-            text("SELECT 1 FROM canonique.orange_ppd_excel_imports WHERE import_id=:id AND user_id=:uid"), 
-            {"id": import_id, "uid": current_user_id}
-        ).scalar()
-        if exc_imp: 
-            return import_id
-            
-        raise HTTPException(status_code=403, detail="Accès refusé ou import introuvable")
 
-    latest_csv = (
+def _resolve_import_id(db: Session, import_id: str | None) -> str | None:
+    if import_id:
+        return import_id
+    latest = (
         db.query(RawOrangePpdImport)
-        .filter(RawOrangePpdImport.user_id == current_user_id)
         .order_by(RawOrangePpdImport.imported_at.desc(), RawOrangePpdImport.import_id.desc())
         .first()
     )
-    
-    latest_excel = db.execute(
-        text("SELECT import_id, imported_at FROM canonique.orange_ppd_excel_imports WHERE user_id = :uid ORDER BY imported_at DESC LIMIT 1"),
-        {"uid": current_user_id}
-    ).mappings().first()
-
-    if latest_csv and latest_excel:
-        if latest_csv.imported_at > latest_excel["imported_at"]:
-            return latest_csv.import_id
-        return latest_excel["import_id"]
-    elif latest_csv:
-        return latest_csv.import_id
-    elif latest_excel:
-        return latest_excel["import_id"]
-        
-    return None
+    return latest.import_id if latest else None
 
 
 # --------------------
@@ -208,13 +174,14 @@ def _stop_line(cmd: str, rel: str, mb: Decimal | None, mm: Decimal | None) -> bo
 def _is_xlsx(filename: str | None, content: bytes) -> bool:
     if filename and filename.lower().endswith(".xlsx"):
         return True
+    # XLSX is ZIP => starts with PK
     return len(content) >= 2 and content[0:2] == b"PK"
 
 
 # --------------------
-# CSV import (phase 1) - MODIFIÉ (user_id)
+# CSV import (phase 1) - inchangé
 # --------------------
-def _import_csv_ppd(db: Session, file: UploadFile, content: bytes, imported_by: str | None, current_user_id: int):
+def _import_csv_ppd(db: Session, file: UploadFile, content: bytes, imported_by: str | None):
     txt = content.decode("utf-8-sig", errors="ignore")
     if not txt.strip():
         raise HTTPException(status_code=400, detail="Fichier vide")
@@ -233,7 +200,6 @@ def _import_csv_ppd(db: Session, file: UploadFile, content: bytes, imported_by: 
         filename=file.filename,
         imported_by=imported_by,
         row_count=0,
-        user_id=current_user_id, # <-- NOUVEAU
     )
     db.add(imp)
     db.flush()
@@ -346,9 +312,9 @@ def _import_csv_ppd(db: Session, file: UploadFile, content: bytes, imported_by: 
 
 
 # --------------------
-# Excel import (phase 2) - MODIFIÉ (user_id)
+# Excel import (phase 2)
 # --------------------
-def _import_excel_ppd(db: Session, file: UploadFile, content: bytes, imported_by: str | None, sheet: str | None, current_user_id: int):
+def _import_excel_ppd(db: Session, file: UploadFile, content: bytes, imported_by: str | None, sheet: str | None):
     try:
         from openpyxl import load_workbook
     except Exception as e:
@@ -371,15 +337,14 @@ def _import_excel_ppd(db: Session, file: UploadFile, content: bytes, imported_by
 
     db.execute(
         text("""
-            INSERT INTO canonique.orange_ppd_excel_imports(import_id, filename, sheet_name, imported_by, row_count, user_id)
-            VALUES (:import_id, :filename, :sheet_name, :imported_by, 0, :user_id)
+            INSERT INTO canonique.orange_ppd_excel_imports(import_id, filename, sheet_name, imported_by, row_count)
+            VALUES (:import_id, :filename, :sheet_name, :imported_by, 0)
         """),
         {
             "import_id": new_import_id,
             "filename": file.filename,
             "sheet_name": sheet_name,
             "imported_by": imported_by,
-            "user_id": current_user_id, # <-- NOUVEAU
         },
     )
 
@@ -474,7 +439,7 @@ def _import_excel_ppd(db: Session, file: UploadFile, content: bytes, imported_by
 
 
 # --------------------
-# Import UNIQUE (CSV ou XLSX)
+# Import UNIQUE (CSV ou XLSX) => front inchangé
 # --------------------
 @router.post("/import")
 async def import_orange_ppd(
@@ -482,7 +447,6 @@ async def import_orange_ppd(
     imported_by: str | None = Query(None),
     sheet: str | None = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user) # <-- NOUVEAU
 ):
     try:
         content = await file.read()
@@ -490,9 +454,9 @@ async def import_orange_ppd(
             raise HTTPException(status_code=400, detail="Fichier vide")
 
         payload = (
-            _import_excel_ppd(db, file, content, imported_by, sheet, current_user.id)
+            _import_excel_ppd(db, file, content, imported_by, sheet)
             if _is_xlsx(file.filename, content)
-            else _import_csv_ppd(db, file, content, imported_by, current_user.id)
+            else _import_csv_ppd(db, file, content, imported_by)
         )
 
         db.commit()
@@ -507,81 +471,91 @@ async def import_orange_ppd(
 
 
 # --------------------
-# Imports list (CSV + XLSX)
+# ✅ Imports list (CSV + XLSX fusionnés) - VERSION OPTIMISÉE
 # --------------------
 @router.get("/imports")
-def list_imports(
-    limit: int = Query(20, ge=1, le=200), 
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user) # <-- NOUVEAU
-):
-    # CSV
-    csv_q = (
-        db.query(RawOrangePpdImport)
-        .filter(RawOrangePpdImport.user_id == current_user.id) # <-- NOUVEAU
-        .order_by(RawOrangePpdImport.imported_at.desc(), RawOrangePpdImport.import_id.desc())
-        .limit(limit)
-        .all()
-    )
-    csv_rows = [
-        {
-            "import_id": it.import_id,
-            "filename": it.filename,
-            "row_count": it.row_count,
-            "imported_by": it.imported_by,
-            "imported_at": it.imported_at.isoformat() if it.imported_at else None,
-            "kind": "CSV",
-            "sheet_name": None,
-        }
-        for it in csv_q
-    ]
-
-    # XLSX
-    xlsx_q = db.execute(
+def list_imports(limit: int = Query(20, ge=1, le=200), db: Session = Depends(get_db)):
+    """
+    Retourne la liste fusionnée des imports CSV et XLSX, triée par date (du plus récent au plus ancien)
+    """
+    # Récupérer les imports CSV
+    csv_result = db.execute(
         text("""
-            SELECT import_id, filename, sheet_name, row_count, imported_by, imported_at
-            FROM canonique.orange_ppd_excel_imports
-            WHERE user_id = :uid
+            SELECT 
+                import_id,
+                filename,
+                row_count,
+                imported_by,
+                imported_at
+            FROM canonique.orange_ppd_imports
             ORDER BY imported_at DESC, import_id DESC
             LIMIT :limit
         """),
-        {"limit": limit, "uid": current_user.id}, # <-- NOUVEAU
+        {"limit": limit}
+    ).mappings().all()
+    
+    csv_rows = [
+        {
+            "import_id": r["import_id"],
+            "filename": r["filename"],
+            "row_count": r["row_count"],
+            "imported_by": r["imported_by"],
+            "imported_at": r["imported_at"].isoformat() if r["imported_at"] else None,
+            "kind": "CSV",
+            "sheet_name": None
+        }
+        for r in csv_result
+    ]
+
+    # Récupérer les imports XLSX
+    xlsx_result = db.execute(
+        text("""
+            SELECT 
+                import_id,
+                filename,
+                sheet_name,
+                row_count,
+                imported_by,
+                imported_at
+            FROM canonique.orange_ppd_excel_imports
+            ORDER BY imported_at DESC, import_id DESC
+            LIMIT :limit
+        """),
+        {"limit": limit}
     ).mappings().all()
 
     xlsx_rows = [
         {
             "import_id": r["import_id"],
-            "filename": r.get("filename"),
-            "row_count": r.get("row_count"),
-            "imported_by": r.get("imported_by"),
-            "imported_at": r["imported_at"].isoformat() if r.get("imported_at") else None,
+            "filename": r["filename"],
+            "row_count": r["row_count"],
+            "imported_by": r["imported_by"],
+            "imported_at": r["imported_at"].isoformat() if r["imported_at"] else None,
             "kind": "XLSX",
-            "sheet_name": r.get("sheet_name"),
+            "sheet_name": r["sheet_name"]
         }
-        for r in xlsx_q
+        for r in xlsx_result
     ]
 
+    # Fusionner et trier
     merged = csv_rows + xlsx_rows
-    merged.sort(key=lambda x: (x.get("imported_at") or ""), reverse=True)
+    merged.sort(key=lambda x: x.get("imported_at") or "", reverse=True)
+    
+    # Limiter le résultat final
     return merged[:limit]
 
 
-# ✅ pour corriger ton 404 (si ton front l’appelle encore)
+# ✅ Gardé pour compatibilité (si le front l'appelle encore)
 @router.get("/excel-imports")
-def list_excel_imports(
-    limit: int = Query(20, ge=1, le=200), 
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user) # <-- NOUVEAU
-):
+def list_excel_imports(limit: int = Query(20, ge=1, le=200), db: Session = Depends(get_db)):
     rows = db.execute(
         text("""
             SELECT import_id, filename, sheet_name, row_count, imported_by, imported_at
             FROM canonique.orange_ppd_excel_imports
-            WHERE user_id = :uid
             ORDER BY imported_at DESC, import_id DESC
             LIMIT :limit
         """),
-        {"limit": limit, "uid": current_user.id}, # <-- NOUVEAU
+        {"limit": limit},
     ).mappings().all()
     return [dict(r) for r in rows]
 
@@ -590,12 +564,8 @@ def list_excel_imports(
 # PPD options (CSV only)
 # --------------------
 @router.get("/ppd-options")
-def ppd_options(
-    import_id: str | None = Query(None), 
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user) # <-- NOUVEAU
-):
-    import_id = _resolve_import_id(db, import_id, current_user.id)
+def ppd_options(import_id: str | None = Query(None), db: Session = Depends(get_db)):
+    import_id = _resolve_import_id(db, import_id)
     if not import_id:
         return []
     rows = db.execute(
@@ -620,12 +590,7 @@ def compare_orange_ppd(
     ppd: str | None = Query(default=None),
     only_mismatch: bool = Query(default=False),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user) # <-- NOUVEAU
 ):
-    import_id = _resolve_import_id(db, import_id, current_user.id)
-    if not import_id:
-        return [] # <-- Si l'user n'a aucun import
-
     # detect XLSX import
     is_xlsx = False
     if import_id:
@@ -693,7 +658,7 @@ def compare_orange_ppd(
       croisement_complet,
       reason
     FROM canonique.v_orange_ppd_compare
-    WHERE import_id = :import_id
+    WHERE (:import_id IS NULL OR import_id = :import_id)
       AND (:ppd IS NULL OR numero_ppd_orange = :ppd)
       AND (:only_mismatch = FALSE OR a_verifier = TRUE)
     ORDER BY num_ot
@@ -702,22 +667,12 @@ def compare_orange_ppd(
     return [dict(r) for r in rows]
 
 
-
 @router.get("/compare-summary")
 def compare_orange_ppd_summary(
     import_id: str | None = Query(default=None),
     ppd: str | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user) # <-- NOUVEAU
 ):
-    import_id = _resolve_import_id(db, import_id, current_user.id)
-    if not import_id:
-        return {
-            "orange_total_ht": 0, "orange_total_ttc": 0,
-            "kyntus_total_ht": 0, "kyntus_total_ttc": 0,
-            "ecart_ht": 0, "ecart_ttc": 0
-        }
-
     is_xlsx = False
     if import_id:
         is_xlsx = bool(
@@ -762,7 +717,7 @@ def compare_orange_ppd_summary(
       (COALESCE(SUM(facturation_orange_ht), 0) - COALESCE(SUM(facturation_kyntus_ht), 0))::numeric(12,2)  AS ecart_ht,
       (COALESCE(SUM(facturation_orange_ttc), 0) - COALESCE(SUM(facturation_kyntus_ttc), 0))::numeric(12,2) AS ecart_ttc
     FROM canonique.v_orange_ppd_compare
-    WHERE import_id = :import_id
+    WHERE (:import_id IS NULL OR import_id = :import_id)
       AND (:ppd IS NULL OR numero_ppd_orange = :ppd)
     """
     row = db.execute(text(sql), {"import_id": import_id, "ppd": ppd}).mappings().first()
