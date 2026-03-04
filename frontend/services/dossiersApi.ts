@@ -293,7 +293,7 @@ export async function exportDossiersXlsx(filters: DossiersFilters = {}): Promise
 ========================= */
 
 export interface ImportCsvOptions {
-  type: "PRAXEDO" | "PIDI" | "ORANGE_PPD" | "PRAXEDO_CR10";
+  type: "PRAXEDO" | "PIDI" | "ORANGE_PPD" | "PRAXEDO_CR10" | "COMMENTAIRE_TECH";  // ✅ Ajout du nouveau type
   file: File;
   delimiter?: ";" | "," | "\t" | "|";
   signal?: AbortSignal;
@@ -314,14 +314,27 @@ export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvRes
   formData.append("file", file);
   formData.append("delimiter", delimiter);
 
-  const endpoint =
-    type === "PRAXEDO"
-      ? `${API_URL}/api/import/praxedo`
-      : type === "PIDI"
-      ? `${API_URL}/api/import/pidi`
-      : type === "PRAXEDO_CR10"
-      ? `${API_URL}/api/import/praxedo-cr10`
-      : `${API_URL}/api/orange-ppd/import`;
+  // ✅ Déterminer le bon endpoint selon le type
+  let endpoint: string;
+  
+  switch (type) {
+    case "PRAXEDO":
+      endpoint = `${API_URL}/api/import/praxedo`;
+      break;
+    case "PIDI":
+      endpoint = `${API_URL}/api/import/pidi`;
+      break;
+    case "PRAXEDO_CR10":
+      endpoint = `${API_URL}/api/import/praxedo-cr10`;
+      break;
+    case "COMMENTAIRE_TECH":
+      endpoint = `${API_URL}/api/import/commentaire-tech-cr10`;  // ✅ Nouvel endpoint
+      break;
+    case "ORANGE_PPD":
+    default:
+      endpoint = `${API_URL}/api/orange-ppd/import`;
+      break;
+  }
 
   console.log(`📤 Import CSV - Type: ${type}, Endpoint: ${endpoint}`);
   console.log(`📄 Fichier: ${file.name}, Taille: ${file.size} bytes, Délimiteur: ${delimiter}`);
@@ -358,10 +371,12 @@ export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvRes
   }
 }
 
+// ✅ Fonctions helpers (inchangées)
 export const uploadPraxedo = (file: File) => importCsv({ type: "PRAXEDO", file });
 export const uploadPidi = (file: File) => importCsv({ type: "PIDI", file });
 export const uploadOrangePpd = (file: File) => importCsv({ type: "ORANGE_PPD", file });
 export const uploadPraxedoCr10 = (file: File) => importCsv({ type: "PRAXEDO_CR10", file });
+export const uploadCommentaireTech = (file: File) => importCsv({ type: "COMMENTAIRE_TECH", file });  // ✅ Nouvelle fonction helper
 
 /* =========================
    ORANGE PPD (CSV + XLSX)
@@ -415,6 +430,9 @@ export type OrangePpdComparison = {
 
   // nds peut venir comme array Postgres (text[]) ou string
   nds?: string[] | string | null;
+
+  // Certains endpoints remontent aussi numero_ots (text[])
+  numero_ots?: string[] | string | null;
 
   // OT réel PIDI si ajouté au back
   ot_pidi?: string | null;
