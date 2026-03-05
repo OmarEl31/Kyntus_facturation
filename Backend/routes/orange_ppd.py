@@ -585,126 +585,54 @@ def compare_orange_ppd(
     only_mismatch: bool = Query(default=False),
     db: Session = Depends(get_db),
 ):
-    # ------------------------------------------------------------------ XLSX
-    # FIX: la colonne "releve" de orange_ppd_excel_rows est maintenant
-    # agrégée par cac_key (ARRAY_AGG) pour être renvoyée au frontend.
-    # Avant ce fix, le SELECT ne retournait ni "releve" ni "nds",
-    # d'où le "—" permanent dans la colonne Relevé / ND.
+
+    # ------------------------------------------------------------ XLSX
     if _is_xlsx_import(db, import_id):
-        sql = """
-        WITH base AS (
-          SELECT
-            r.import_id,
-            NULLIF(BTRIM(r.ppd_num),'')  AS numero_ppd_orange,
-            NULLIF(BTRIM(r.commande),'') AS commande_raw,
-            NULLIF(BTRIM(r.releve),'')   AS releve_val,
-            COALESCE(r.montant_brut, 0)::numeric(12,2)   AS orange_ht,
-            COALESCE(r.montant_majore, 0)::numeric(12,2) AS orange_ttc
-          FROM canonique.orange_ppd_excel_rows r
-          WHERE r.import_id = :import_id
-            AND (:ppd IS NULL OR NULLIF(BTRIM(r.ppd_num),'') = :ppd)
-        ),
 
-        o AS (
-          SELECT
-            b.import_id,
-            b.numero_ppd_orange,
-            UPPER(regexp_replace(BTRIM(tok), '\\s+', '', 'g'))  AS cac_key,
-            SUM(b.orange_ht)::numeric(12,2)                     AS facturation_orange_ht,
-            SUM(b.orange_ttc)::numeric(12,2)                    AS facturation_orange_ttc,
-            -- Collecte de tous les relevés distincts associés à ce CAC
-            ARRAY_REMOVE(ARRAY_AGG(DISTINCT b.releve_val), NULL) AS nds
-          FROM base b
-          CROSS JOIN LATERAL
-            regexp_split_to_table(COALESCE(b.commande_raw, ''), '[,;|\\n\\r\\t ]+') AS tok
-          WHERE NULLIF(BTRIM(tok), '') IS NOT NULL
-          GROUP BY b.import_id, b.numero_ppd_orange,
-                   UPPER(regexp_replace(BTRIM(tok), '\\s+', '', 'g'))
-        ),
-
-        p AS (
-          SELECT
-            UPPER(regexp_replace(BTRIM(p.n_cac), '\\s+', '', 'g')) AS cac_key,
-            SUM(COALESCE(p.ht, 0))::numeric(12,2) AS pidi_ht,
-            SUM(
-              COALESCE(
-                NULLIF(
-                  REPLACE(regexp_replace(BTRIM(p.bordereau), '[^0-9,\\.\\-]', '', 'g'), ',', '.'),
-                  ''
-                )::numeric,
-                0
-              )
-            )::numeric(12,2) AS pidi_bordereau
-          FROM raw.pidi p
-          WHERE NULLIF(BTRIM(p.n_cac), '') IS NOT NULL
-          GROUP BY 1
-        )
-
-        SELECT
-          o.import_id,
-          o.cac_key                                                            AS num_ot,
-          o.numero_ppd_orange,
-
-          -- ← FIX principal : releve + nds désormais présents dans la réponse
-          CASE WHEN array_length(o.nds, 1) > 0 THEN o.nds[1] ELSE NULL END   AS releve,
-          o.nds,
-
-          o.facturation_orange_ht,
-          o.facturation_orange_ttc,
-          COALESCE(p.pidi_ht, 0)::numeric(12,2)                               AS facturation_kyntus_ht,
-          COALESCE(p.pidi_bordereau, 0)::numeric(12,2)                        AS facturation_kyntus_ttc,
-          (o.facturation_orange_ht  - COALESCE(p.pidi_ht, 0))::numeric(12,2)        AS diff_ht,
-          (o.facturation_orange_ttc - COALESCE(p.pidi_bordereau, 0))::numeric(12,2) AS diff_ttc,
-
-          CASE
-            WHEN p.cac_key IS NULL THEN TRUE
-            WHEN (o.facturation_orange_ht  - COALESCE(p.pidi_ht, 0)) <> 0 THEN TRUE
-            WHEN (o.facturation_orange_ttc - COALESCE(p.pidi_bordereau, 0)) <> 0 THEN TRUE
-            ELSE FALSE
-          END AS a_verifier,
-
-          (p.cac_key IS NOT NULL) AS ot_existant,
-
-          CASE
-            WHEN p.cac_key IS NULL THEN 'ABSENT_PIDI'
-            ELSE 'OK'
-          END AS statut_croisement,
-
-          (p.cac_key IS NOT NULL) AS croisement_complet,
-
-          -- FIX reason : 'ABSENT_PIDI' au lieu de 'CROISEMENT_INCOMPLET'
-          -- pour que le badge frontend affiche correctement en rouge
-          CASE
-            WHEN p.cac_key IS NULL THEN 'ABSENT_PIDI'
-            WHEN (o.facturation_orange_ht  - COALESCE(p.pidi_ht, 0)) <> 0 THEN 'COMPARAISON_INCOHERENTE'
-            WHEN (o.facturation_orange_ttc - COALESCE(p.pidi_bordereau, 0)) <> 0 THEN 'COMPARAISON_INCOHERENTE'
-            ELSE 'OK'
-          END AS reason
-
-        FROM o
-        LEFT JOIN p ON p.cac_key = o.cac_key
-
-        WHERE (:only_mismatch = FALSE OR
-          CASE
-            WHEN p.cac_key IS NULL THEN TRUE
-            WHEN (o.facturation_orange_ht  - COALESCE(p.pidi_ht, 0)) <> 0 THEN TRUE
-            WHEN (o.facturation_orange_ttc - COALESCE(p.pidi_bordereau, 0)) <> 0 THEN TRUE
-            ELSE FALSE
-          END = TRUE
-        )
-        ORDER BY o.cac_key
-        """
         rows = db.execute(
-            text(sql),
-            {"import_id": import_id, "ppd": ppd, "only_mismatch": only_mismatch},
+            text("""
+                SELECT
+                  import_id,
+                  n_cac        AS num_ot,
+                  numero_ppd_orange,
+                  releve,
+                  nds,
+                  facturation_orange_ht,
+                  facturation_orange_ttc,
+                  facturation_kyntus_ht,
+                  facturation_kyntus_ttc,
+                  diff_ht,
+                  diff_ttc,
+                  a_verifier,
+                  true AS ot_existant,
+
+                  CASE
+                    WHEN match_found THEN 'OK'
+                    ELSE 'ABSENT_PIDI'
+                  END AS statut_croisement,
+
+                  match_found AS croisement_complet,
+                  reason
+
+                FROM canonique.v_orange_ppd_excel_compare_releve
+
+                WHERE import_id = :import_id
+                  AND (:ppd IS NULL OR numero_ppd_orange = :ppd)
+                  AND (:only_mismatch = FALSE OR a_verifier = TRUE)
+
+                ORDER BY n_cac, releve
+            """),
+            {
+                "import_id": import_id,
+                "ppd": ppd,
+                "only_mismatch": only_mismatch,
+            },
         ).mappings().all()
+
         return [dict(r) for r in rows]
 
-    # ------------------------------------------------------------------ CSV
-    # FIX 1: agrégation du champ "nd" depuis orange_ppd_rows → releve/nds
-    # FIX 2: la vue retourne reason='OT_INEXISTANT' et kyntus=NULL pour les
-    #         OTs absents de PIDI. On normalise pour être cohérent avec XLSX :
-    #         OT_INEXISTANT → ABSENT_PIDI  +  COALESCE kyntus à 0
+    # ------------------------------------------------------------ CSV
+
     rows = db.execute(
         text("""
             SELECT
@@ -715,7 +643,6 @@ def compare_orange_ppd(
               COALESCE(v.facturation_orange_ht,  0)::numeric(12,2) AS facturation_orange_ht,
               COALESCE(v.facturation_orange_ttc, 0)::numeric(12,2) AS facturation_orange_ttc,
 
-              -- ← FIX 2 : kyntus COALESCE à 0 (affiche "0.00 €" au lieu de "— €")
               COALESCE(v.facturation_kyntus_ht,  0)::numeric(12,2) AS facturation_kyntus_ht,
               COALESCE(v.facturation_kyntus_ttc, 0)::numeric(12,2) AS facturation_kyntus_ttc,
 
@@ -725,7 +652,6 @@ def compare_orange_ppd(
               v.a_verifier,
               v.ot_existant,
 
-              -- ← FIX 2 : statut_croisement normalisé
               CASE
                 WHEN COALESCE(v.statut_croisement, '') IN ('', 'OT_INEXISTANT')
                   THEN 'ABSENT_PIDI'
@@ -734,7 +660,6 @@ def compare_orange_ppd(
 
               v.croisement_complet,
 
-              -- ← FIX 2 : reason normalisé (OT_INEXISTANT → ABSENT_PIDI)
               CASE
                 WHEN COALESCE(v.reason, '') IN ('', 'OT_INEXISTANT', 'CROISEMENT_INCOMPLET')
                  AND COALESCE(v.facturation_kyntus_ht, 0) = 0
@@ -742,14 +667,15 @@ def compare_orange_ppd(
                 ELSE COALESCE(v.reason, 'ABSENT_PIDI')
               END AS reason,
 
-              -- ← FIX 1 : ND depuis orange_ppd_rows
               ARRAY_REMOVE(
                 ARRAY_AGG(DISTINCT NULLIF(BTRIM(r.nd), '')),
                 NULL
               ) AS nds,
+
               MIN(NULLIF(BTRIM(r.nd), '')) AS releve
 
             FROM canonique.v_orange_ppd_compare v
+
             LEFT JOIN canonique.orange_ppd_rows r
               ON  r.import_id = v.import_id
               AND UPPER(regexp_replace(BTRIM(r.numero_ot), '\\s+', '', 'g'))
@@ -771,6 +697,7 @@ def compare_orange_ppd(
         """),
         {"import_id": import_id, "ppd": ppd, "only_mismatch": only_mismatch},
     ).mappings().all()
+
     return [dict(r) for r in rows]
 
 
@@ -861,3 +788,183 @@ def compare_orange_ppd_summary(
         {"import_id": import_id, "ppd": ppd},
     ).mappings().first()
     return dict(row) if row else _empty
+
+@router.get("/compare-tree")
+def compare_orange_ppd_tree(
+    import_id: str | None = Query(default=None),
+    ppd: str | None = Query(default=None),
+    only_mismatch: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    """
+    Retourne une structure hiérarchique:
+      CAC (commande) -> Relevé (comment_acqui_rejet) -> ND
+    Montants Kyntus TTC = somme(bordereau parsé)  [Option A]
+    Ne touche pas aux vues existantes, ne casse pas /compare.
+    """
+
+    # -------------------- helpers local
+    def _clean_key(s: str | None) -> str | None:
+        if not s:
+            return None
+        return re.sub(r"\s+", "", str(s).strip()).upper() or None
+
+    def _norm_releve_key(s: str | None) -> str | None:
+        # même logique que ta vue: trim + ltrim 0 + enlever non alnum + upper
+        if not s:
+            return None
+        x = str(s).strip()
+        x = x.lstrip("0")
+        x = re.sub(r"[^0-9A-Za-z]", "", x)
+        x = x.upper()
+        return x or None
+
+    # -------------------- XLSX ONLY (ton besoin actuel correspond à l’Excel)
+    if not _is_xlsx_import(db, import_id):
+        raise HTTPException(status_code=400, detail="compare-tree est prévu pour les imports XLSX (Excel).")
+
+    # 1) Niveau CAC+Relevé depuis la vue existante (déjà comparée)
+    base_rows = db.execute(
+        text("""
+            SELECT
+              import_id,
+              n_cac        AS num_ot,
+              releve,
+              numero_ppd_orange,
+              facturation_orange_ht,
+              facturation_orange_ttc,
+              facturation_kyntus_ht,
+              facturation_kyntus_ttc,
+              diff_ht,
+              diff_ttc,
+              a_verifier,
+              reason,
+              nds
+            FROM canonique.v_orange_ppd_excel_compare_releve
+            WHERE import_id = :import_id
+              AND (:ppd IS NULL OR numero_ppd_orange = :ppd)
+              AND (:only_mismatch = FALSE OR a_verifier = TRUE)
+            ORDER BY n_cac, releve
+        """),
+        {"import_id": import_id, "ppd": ppd, "only_mismatch": only_mismatch},
+    ).mappings().all()
+
+    if not base_rows:
+        return []
+
+    # 2) Détails ND depuis PIDI: group by CAC+Relevé+ND
+    #    TTC Kyntus = somme(bordereau parsé) (Option A)
+    nd_rows = db.execute(
+        text(r"""
+            SELECT
+              upper(regexp_replace(btrim(p.n_cac), '\s+', '', 'g')) AS cac_key,
+              upper(regexp_replace(ltrim(NULLIF(btrim(p.comment_acqui_rejet), ''), '0'), '[^0-9A-Za-z]', '', 'g')) AS releve_key,
+              NULLIF(btrim(p.n_cac), '') AS n_cac,
+              NULLIF(btrim(p.comment_acqui_rejet), '') AS releve,
+              NULLIF(btrim(p.nd), '') AS nd,
+
+              sum(coalesce(p.ht, 0))::numeric(12,2) AS pidi_ht,
+
+              sum(
+                coalesce(
+                  nullif(
+                    replace(regexp_replace(btrim(p.bordereau), '[^0-9,.\-]', '', 'g'), ',', '.'),
+                    ''
+                  )::numeric,
+                  0
+                )
+              )::numeric(12,2) AS pidi_ttc
+
+            FROM raw.pidi p
+            WHERE NULLIF(btrim(p.n_cac), '') IS NOT NULL
+              AND NULLIF(btrim(p.comment_acqui_rejet), '') IS NOT NULL
+            GROUP BY 1,2,3,4,5
+        """)
+    ).mappings().all()
+
+    # index: (cac_key, releve_key) -> list(nd items)
+    nd_index: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for r in nd_rows:
+        ck = _clean_key(r["n_cac"]) or (r["cac_key"] or "")
+        rk = _norm_releve_key(r["releve"]) or (r["releve_key"] or "")
+        if not ck or not rk:
+            continue
+        nd_index.setdefault((ck, rk), []).append(
+            {
+                "nd": r["nd"],
+                "facturation_kyntus_ht": float(r["pidi_ht"] or 0),
+                "facturation_kyntus_ttc": float(r["pidi_ttc"] or 0),
+            }
+        )
+
+    # 3) Build tree: CAC -> Relevé -> ND
+    #    On agrège aussi un total CAC à partir des enfants (Orange/Kyntus/diff)
+    cac_tree: dict[str, dict[str, Any]] = {}
+
+    for r in base_rows:
+        cac = str(r["num_ot"] or "").strip()
+        releve = str(r["releve"] or "").strip()
+        if not cac:
+            continue
+
+        cac_key = _clean_key(cac) or ""
+        releve_key = _norm_releve_key(releve) or ""
+
+        # init CAC node
+        node = cac_tree.get(cac)
+        if not node:
+            node = {
+                "num_ot": cac,
+                "numero_ppd_orange": r.get("numero_ppd_orange"),
+                "facturation_orange_ht": 0.0,
+                "facturation_orange_ttc": 0.0,
+                "facturation_kyntus_ht": 0.0,
+                "facturation_kyntus_ttc": 0.0,
+                "diff_ht": 0.0,
+                "diff_ttc": 0.0,
+                "a_verifier": False,
+                "children": [],
+            }
+            cac_tree[cac] = node
+
+        orange_ht = float(r.get("facturation_orange_ht") or 0)
+        orange_ttc = float(r.get("facturation_orange_ttc") or 0)
+        kyntus_ht = float(r.get("facturation_kyntus_ht") or 0)
+        kyntus_ttc = float(r.get("facturation_kyntus_ttc") or 0)
+        diff_ht = float(r.get("diff_ht") or 0)
+        diff_ttc = float(r.get("diff_ttc") or 0)
+        a_verif = bool(r.get("a_verifier") or False)
+
+        # children ND list for this CAC+Relevé
+        nd_children = nd_index.get((cac_key, releve_key), [])
+
+        releve_node = {
+            "releve": releve or None,
+            "numero_ppd_orange": r.get("numero_ppd_orange"),
+            "facturation_orange_ht": orange_ht,
+            "facturation_orange_ttc": orange_ttc,
+            "facturation_kyntus_ht": kyntus_ht,
+            "facturation_kyntus_ttc": kyntus_ttc,
+            "diff_ht": diff_ht,
+            "diff_ttc": diff_ttc,
+            "a_verifier": a_verif,
+            "reason": r.get("reason"),
+            "nds": r.get("nds"),
+            "children": nd_children,
+        }
+
+        node["children"].append(releve_node)
+
+        # roll-up totals at CAC level
+        node["facturation_orange_ht"] += orange_ht
+        node["facturation_orange_ttc"] += orange_ttc
+        node["facturation_kyntus_ht"] += kyntus_ht
+        node["facturation_kyntus_ttc"] += kyntus_ttc
+        node["diff_ht"] += diff_ht
+        node["diff_ttc"] += diff_ttc
+        node["a_verifier"] = node["a_verifier"] or a_verif
+
+    # 4) return list sorted
+    out = list(cac_tree.values())
+    out.sort(key=lambda x: (x.get("num_ot") or ""))
+    return out

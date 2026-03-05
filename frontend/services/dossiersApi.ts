@@ -438,6 +438,58 @@ export type OrangePpdComparison = {
   ot_pidi?: string | null;
 };
 
+export type OrangePpdNdChild = {
+  nd?: string | null;
+  facturation_kyntus_ht?: number | null;
+  facturation_kyntus_ttc?: number | null;
+};
+
+export type OrangePpdTreeReleve = {
+  releve?: string | null;
+  numero_ppd_orange?: string | null;
+  facturation_orange_ht?: number | null;
+  facturation_orange_ttc?: number | null;
+  facturation_kyntus_ht?: number | null;
+  facturation_kyntus_ttc?: number | null;
+  diff_ht?: number | null;
+  diff_ttc?: number | null;
+  a_verifier?: boolean | null;
+  reason?: string | null;
+  nds?: string[] | string | null;
+  children?: OrangePpdNdChild[];
+};
+
+export type OrangePpdTreeNode = {
+  num_ot: string;
+  numero_ppd_orange?: string | null;
+  facturation_orange_ht?: number | null;
+  facturation_orange_ttc?: number | null;
+  facturation_kyntus_ht?: number | null;
+  facturation_kyntus_ttc?: number | null;
+  diff_ht?: number | null;
+  diff_ttc?: number | null;
+  a_verifier?: boolean | null;
+  children?: OrangePpdTreeReleve[];
+};
+
+export async function compareOrangePpdTree(
+  params: { importId?: string; ppd?: string; onlyMismatch?: boolean } = {}
+): Promise<OrangePpdTreeNode[]> {
+  const qs = new URLSearchParams();
+  if (params.importId) qs.set("import_id", params.importId);
+  if (params.ppd?.trim()) qs.set("ppd", params.ppd.trim());
+  if (params.onlyMismatch) qs.set("only_mismatch", "true");
+
+  const response = await fetch(`${API_URL}/api/orange-ppd/compare-tree${qs.toString() ? `?${qs}` : ""}`, {
+    headers: getAuthHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Erreur ${response.status}: ${await response.text()}`);
+  }
+
+  return response.json();
+}
 /**
  * Upload XLSX Orange PPD (PPDATEL multi-feuille)
  * Endpoint backend: /api/orange-ppd/import-excel
