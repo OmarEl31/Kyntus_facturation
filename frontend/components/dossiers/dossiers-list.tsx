@@ -117,12 +117,19 @@ function normalizeNds(v: unknown): string[] {
   return [s];
 }
 
-function resolveReleveOrNd(row: OrangePpdComparison): { releveText: string; ndList: string[] } {
-  const ndList = normalizeNds(row.nds ?? row.numero_ots);
+/**
+ * Sépare clairement les deux niveaux :
+ *  - releveText : le relevé Orange (r.releve), toujours affiché sur la ligne parent
+ *  - ndList     : les NDs PIDI (r.nds / r.numero_ots), affichés uniquement dans les sous-lignes
+ * Les deux sources ne se mélangent plus.
+ */
+function resolveReleveAndNds(row: OrangePpdComparison): { releveText: string; ndList: string[] } {
   const releveRaw = typeof row.releve === "string" ? row.releve.trim() : "";
-  if (releveRaw) return { releveText: releveRaw, ndList };
-  if (ndList.length > 0) return { releveText: ndList[0], ndList };
-  return { releveText: "—", ndList: [] };
+  const ndList    = normalizeNds(row.nds ?? row.numero_ots);
+  return {
+    releveText: releveRaw || "—",
+    ndList,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -339,7 +346,7 @@ export default function DossiersList() {
   const [selectedOrangeImportId, setSelectedOrangeImportId] = useState<string>("");
   const [orangePpdOptions, setOrangePpdOptions] = useState<string[]>([]);
   const [selectedOrangePpd, setSelectedOrangePpd] = useState<string>("");
-  // ← FIX: set keeps track of expanded CAC keys (not full row IDs)
+  // ← clé d'expansion = rowKey (OT__releve), pas juste le num_ot
   const [expandedCacKeys, setExpandedCacKeys] = useState<Set<string>>(new Set());
 
   const [orangeStatus, setOrangeStatus] = useState<"ALL" | "OK" | "A_VERIFIER">("ALL");
@@ -413,7 +420,7 @@ export default function DossiersList() {
     }
   }, [selectedOrangeImportId, selectedOrangePpd]);
 
-  // ← FIX 1: auto-load orange when section becomes visible
+  // auto-load orange when section becomes visible
   useEffect(() => {
     if (showOrangeSection && orangeRows.length === 0 && !loadingOrange) {
       loadOrangeComparison();
@@ -504,9 +511,10 @@ export default function DossiersList() {
     try {
       const dataToExport = orangeRowsFiltered.map((r) => {
         const ndList = normalizeNds(r.nds ?? r.numero_ots);
+        const releveText = typeof r.releve === "string" && r.releve.trim() ? r.releve.trim() : "—";
         return {
           "Num OT": r.num_ot,
-          "Relevé": r.releve ?? "—",
+          "Relevé": releveText,
           "ND(s)": ndList.length ? ndList.join(", ") : "—",
           "OT Existant": r.ot_existant ? "Oui" : "Non",
           "Statut Croisement": r.statut_croisement ?? "—",
@@ -534,11 +542,11 @@ export default function DossiersList() {
     }
   }, [orangeRowsFiltered, selectedOrangeImportId, orangeImports]);
 
-  // ─── Toggle expand CAC ──────────────────────────────────────────────────
-  const toggleCacExpand = (cacKey: string) => {
+  // ─── Toggle expand (rowKey = OT__releve) ────────────────────────────────
+  const toggleCacExpand = (rowKey: string) => {
     setExpandedCacKeys((prev) => {
       const next = new Set(prev);
-      next.has(cacKey) ? next.delete(cacKey) : next.add(cacKey);
+      next.has(rowKey) ? next.delete(rowKey) : next.add(rowKey);
       return next;
     });
   };
@@ -617,7 +625,6 @@ export default function DossiersList() {
   function closeDrawer() { setDrawerOpen(false); setSelected(null); setShowRawTerrain(false); }
 
   // ─── Shared columns for orange table rows ───────────────────────────────
-  // FIX 2: each ND sub-row renders the full row with all columns
   const renderOrangeAmountCells = (r: any) => (
     <>
       <td className="p-3 align-middle"><AmountPill v={r.facturation_orange_ht}  kind="orange" /></td>
@@ -847,7 +854,7 @@ export default function DossiersList() {
                   <tr className="text-left border-b">
                     <th className="p-3 w-8"></th>
                     <th className="p-3 font-semibold text-gray-700">OT (CAC)</th>
-                    <th className="p-3 font-semibold text-gray-700">Relevé / ND</th>
+                    <th className="p-3 font-semibold text-gray-700">Relevé</th>
                     <th className="p-3 font-semibold text-gray-700">Raison</th>
                     <th className="p-3 font-semibold text-gray-700">Montant brut (HT)</th>
                     <th className="p-3 font-semibold text-gray-700">Vision Praxedo (HT)</th>
@@ -859,29 +866,33 @@ export default function DossiersList() {
                 </thead>
                 <tbody>
                   {orangeRowsPage.map((r) => {
-                    const { releveText, ndList } = resolveReleveOrNd(r);
-                    // All NDs to display: first = releveText, rest = extra NDs
-                    const allNds = ndList.length > 0 ? ndList : [releveText].filter((x) => x !== "—");
-                    const hasMultipleNds = allNds.length > 1;
-                    const cacKey = String(r.num_ot || "");
-                    const isExpanded = expandedCacKeys.has(cacKey);
+                    // ── Fixes 3 & 4 : relevé (parent) et NDs (enfants) séparés proprement ──
+                    const { releveText, ndList } = resolveReleveAndNds(r);
+
+                    // Le bouton expand s'affiche dès qu'il y a au moins 1 ND à détailler
+                    const hasMultipleNds = ndList.length > 0;
+
+                    // Clé unique = OT + Relevé — pas de collision même si 2 OTs identiques
+                    const rowKey = `${String(r.num_ot || "")}__${releveText}`;
+                    const isExpanded = expandedCacKeys.has(rowKey);
+
                     const rowBg = orangeRowBg(r.reason);
                     const badgeKind = orangeReasonBadgeKind(r.reason);
 
                     return (
-                      <React.Fragment key={`${cacKey}__${releveText}`}>
-                        {/* ── Main row (first ND or collapsed summary) ── */}
+                      <React.Fragment key={rowKey}>
+                        {/* ── Ligne principale : OT + Relevé ── */}
                         <tr
                           className={`border-t transition-colors ${rowBg} ${hasMultipleNds ? "cursor-pointer" : ""}`}
-                          onClick={() => hasMultipleNds && toggleCacExpand(cacKey)}
+                          onClick={() => hasMultipleNds && toggleCacExpand(rowKey)}
                         >
-                          {/* Expand toggle */}
+                          {/* Bouton expand (visible si au moins 1 ND à détailler) */}
                           <td className="p-3 align-middle w-8">
                             {hasMultipleNds && (
                               <button
                                 className="flex items-center justify-center w-6 h-6 rounded hover:bg-black/10 transition-colors"
-                                title={isExpanded ? "Réduire" : `Afficher ${allNds.length} NDs`}
-                                onClick={(e) => { e.stopPropagation(); toggleCacExpand(cacKey); }}
+                                title={isExpanded ? "Réduire les NDs" : `Afficher ${ndList.length} ND(s)`}
+                                onClick={(e) => { e.stopPropagation(); toggleCacExpand(rowKey); }}
                               >
                                 {isExpanded
                                   ? <ChevronDown className="h-4 w-4 text-gray-600" />
@@ -890,21 +901,21 @@ export default function DossiersList() {
                             )}
                           </td>
 
-                          {/* OT (CAC) */}
+                          {/* OT (CAC) + badge nb NDs quand replié */}
                           <td className="p-3 align-middle">
                             <div className="font-mono font-semibold text-sm">{r.num_ot || "—"}</div>
                             {hasMultipleNds && !isExpanded && (
                               <div className="mt-1">
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-200 text-gray-700 text-xs font-medium">
-                                  {allNds.length} relevés
+                                  {ndList.length} ND{ndList.length > 1 ? "s" : ""}
                                 </span>
                               </div>
                             )}
                           </td>
 
-                          {/* Relevé principal (first ND) */}
+                          {/* ✅ Fix 5 — Relevé : toujours r.releve, jamais un ND */}
                           <td className="p-3 align-middle">
-                            <div className="font-mono text-sm">{allNds[0] ?? "—"}</div>
+                            <div className="font-mono text-sm">{releveText}</div>
                           </td>
 
                           {/* Raison */}
@@ -912,35 +923,49 @@ export default function DossiersList() {
                             <Badge txt={reasonLabel(r.reason ?? "")} kind={badgeKind} />
                           </td>
 
-                          {/* Montants partagés sur la ligne principale */}
+                          {/* Montants (agrégés par OT) */}
                           {renderOrangeAmountCells(r)}
                         </tr>
 
-                        {/* ── Sub-rows: one per additional ND (shown when expanded) ── */}
-                        {isExpanded && allNds.slice(1).map((nd, idx) => (
-                          <tr key={`${cacKey}__sub__${idx}`} className={`border-t border-dashed ${rowBg} opacity-90`}>
-                            {/* indent marker */}
+                        {/* ── Lignes enfants : une par ND PIDI (visibles si déplié) ── */}
+                        {isExpanded && ndList.map((nd, idx) => (
+                          <tr
+                            key={`${rowKey}__nd__${idx}`}
+                            className={`border-t border-dashed ${rowBg} opacity-90`}
+                          >
+                            {/* Marqueur d'indentation */}
                             <td className="p-3 align-middle">
                               <div className="flex justify-center">
-                                <div className="w-0.5 h-5 bg-gray-300 rounded mx-auto"></div>
+                                <div className="w-0.5 h-5 bg-gray-300 rounded mx-auto" />
                               </div>
                             </td>
-                            {/* OT vide (same CAC) */}
+
+                            {/* OT — flèche d'indentation (même CAC que le parent) */}
                             <td className="p-3 align-middle">
                               <span className="text-gray-400 text-xs font-mono">↳</span>
                             </td>
-                            {/* ND */}
+
+                            {/* ✅ Fix 6 — ND PIDI */}
                             <td className="p-3 align-middle">
                               <div className="font-mono text-sm text-gray-700 bg-white border border-gray-200 rounded px-2 py-1 inline-block">
                                 {nd}
                               </div>
                             </td>
-                            {/* Raison (same as parent) */}
+
+                            {/* Raison (identique au parent) */}
                             <td className="p-3 align-middle">
                               <Badge txt={reasonLabel(r.reason ?? "")} kind={badgeKind} />
                             </td>
-                            {/* Montants (same as parent — aggregated per CAC) */}
-                            {renderOrangeAmountCells(r)}
+
+                            {/* ✅ Fix 6 — Pas de montants sur les enfants : c'est un détail PIDI,
+                                 les montants Orange sont portés uniquement par la ligne parent (CAC).
+                                 On indique clairement l'origine PIDI pour les colonnes HT/Diff. */}
+                            <td className="p-3 align-middle text-gray-400">—</td>
+                            <td className="p-3 align-middle text-xs text-blue-700 font-medium">Détail PIDI</td>
+                            <td className="p-3 align-middle text-gray-400">—</td>
+                            <td className="p-3 align-middle text-gray-400">—</td>
+                            <td className="p-3 align-middle text-xs text-blue-700 font-medium">Détail PIDI</td>
+                            <td className="p-3 align-middle text-gray-400">—</td>
                           </tr>
                         ))}
                       </React.Fragment>
@@ -1257,11 +1282,10 @@ export default function DossiersList() {
             load(filters);
 
             if (t === "ORANGE_PPD") {
-              // ← FIX 3: auto-refresh orange after import
               const newImportId = payload?.importId ?? payload?.import_id ?? "";
               if (newImportId) setSelectedOrangeImportId(newImportId);
               setSelectedOrangePpd("");
-              // Slight delay to let backend commit
+              // Léger délai pour laisser le backend commiter
               setTimeout(() => {
                 loadOrangeComparison({
                   importId: newImportId || selectedOrangeImportId,
