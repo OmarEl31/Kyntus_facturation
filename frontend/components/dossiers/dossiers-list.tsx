@@ -361,26 +361,42 @@ export default function DossiersList() {
   const [showTruncateConfirm, setShowTruncateConfirm] = useState(false);
   const [isTruncating, setIsTruncating] = useState(false);
 
+  // Vrai dès que le token est disponible dans localStorage (évite les fetches sans auth)
+  const [authReady, setAuthReady] = useState(false);
+
   // ─── LOAD DOSSIERS ──────────────────────────────────────────────────────
+  // Ref pour annuler le fetch précédent si un nouveau load démarre avant la fin du premier
+  const dossiersAbortRef = React.useRef<AbortController | null>(null);
+
   const load = useCallback(async (f?: DossiersFilters) => {
     const activeFilters = f ?? filters;
     const normalized: DossiersFilters = {
       ...activeFilters, limit: 5000, offset: 0,
       q: activeFilters.q?.replace(/[<>]/g, ""),
     };
+
+    // Annuler la requête précédente si elle est encore en cours
+    dossiersAbortRef.current?.abort();
+    const controller = new AbortController();
+    dossiersAbortRef.current = controller;
+
     setLoading(true);
     setError(null);
+
     try {
-      const data = await listDossiers(normalized);
+      const data = await listDossiers(normalized, controller.signal);
       setRawItems(data);
       setItems(data);
       setDossiersPage(1);
       if (f) setFilters(normalized);
     } catch (e: any) {
+      // Fetch annulé volontairement → on ignore sans casser l'UI
+      if (e?.name === "AbortError") return;
       setRawItems([]); setItems([]);
       setError(e?.message || "Erreur inconnue");
     } finally {
-      setLoading(false);
+      // Ne pas écraser le loading d'un fetch plus récent qui aurait démarré entre-temps
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, [filters]);
 
@@ -420,12 +436,44 @@ export default function DossiersList() {
     }
   }, [selectedOrangeImportId, selectedOrangePpd]);
 
-  // auto-load orange when section becomes visible
+  // ─── 2.1B — Détection du token (une seule fois au montage) ─────────────────
   useEffect(() => {
+    const token = localStorage.getItem("token");
+    setAuthReady(!!token);
+  }, []);
+
+  // ─── 2.1C — Chargement initial des dossiers dès que le token est prêt ──────
+  useEffect(() => {
+    if (!authReady) return;
+    load(filters);
+  }, [authReady]); // volontairement minimal — on veut déclencher une seule fois
+
+  // ─── 2.2 — Reload au focus uniquement si les données sont absentes ──────────
+  // Cas typique : retour depuis /scraper ou un autre onglet.
+  // On ne recharge PAS si les données sont déjà là → évite le refresh constant.
+  useEffect(() => {
+    if (!authReady) return;
+
+    const onFocus = () => {
+      if (items.length === 0) {
+        load();
+      }
+      if (showOrangeSection && orangeRows.length === 0) {
+        loadOrangeComparison();
+      }
+    };
+
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [authReady, items.length, orangeRows.length, showOrangeSection, load, loadOrangeComparison]);
+
+  // ─── 2.3 — Auto-load Orange quand la section devient visible ─────────────
+  useEffect(() => {
+    if (!authReady) return;
     if (showOrangeSection && orangeRows.length === 0 && !loadingOrange) {
       loadOrangeComparison();
     }
-  }, [showOrangeSection]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [authReady, showOrangeSection]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Valeurs uniques pour filtre croisement ──────────────────────────────
   const uniqueCroisementStatus = useMemo(() => {
@@ -945,21 +993,17 @@ export default function DossiersList() {
                               <span className="text-gray-400 text-xs font-mono">↳</span>
                             </td>
 
-                            {/* ✅ Fix 6 — ND PIDI */}
+                            {/* ND PIDI — sous-ligne informative uniquement */}
                             <td className="p-3 align-middle">
                               <div className="font-mono text-sm text-gray-700 bg-white border border-gray-200 rounded px-2 py-1 inline-block">
                                 {nd}
                               </div>
                             </td>
 
-                            {/* Raison (identique au parent) */}
-                            <td className="p-3 align-middle">
-                              <Badge txt={reasonLabel(r.reason ?? "")} kind={badgeKind} />
-                            </td>
+                            {/* Raison : appartient au relevé (ligne parent), pas au ND — cellule vide */}
+                            <td className="p-3 align-middle text-gray-300">—</td>
 
-                            {/* ✅ Fix 6 — Pas de montants sur les enfants : c'est un détail PIDI,
-                                 les montants Orange sont portés uniquement par la ligne parent (CAC).
-                                 On indique clairement l'origine PIDI pour les colonnes HT/Diff. */}
+                            {/* Montants : portés par le parent (CAC Orange), pas répétés ici */}
                             <td className="p-3 align-middle text-gray-400">—</td>
                             <td className="p-3 align-middle text-xs text-blue-700 font-medium">Détail PIDI</td>
                             <td className="p-3 align-middle text-gray-400">—</td>

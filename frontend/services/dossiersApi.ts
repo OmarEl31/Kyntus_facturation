@@ -164,13 +164,11 @@ function buildParams(filters: DossiersFilters) {
   const croisement = cleanValue(filters.statut_croisement);
   const ppd = cleanValue(filters.ppd);
 
-  // ✅ Utiliser set() qui ajoute correctement "="
   if (q) params.set("q", q);
   if (statut) params.set("statut", statut);
   if (croisement) params.set("croisement", croisement);
   if (ppd) params.set("ppd", ppd);
 
-  // ✅ S'assurer que ce sont des nombres valides
   if (typeof filters.limit === "number" && !isNaN(filters.limit)) {
     params.set("limit", String(filters.limit));
   }
@@ -181,31 +179,41 @@ function buildParams(filters: DossiersFilters) {
   return params;
 }
 
-export async function listDossiers(filters: DossiersFilters = {}): Promise<DossierFacturable[]> {
-  // ✅ Nettoyer les filtres pour éviter les caractères spéciaux
+/**
+ * ✅ Correctif 2C — accepte un AbortSignal optionnel pour permettre l'annulation
+ * depuis le composant (AbortController dans load()).
+ */
+export async function listDossiers(
+  filters: DossiersFilters = {},
+  signal?: AbortSignal,
+): Promise<DossierFacturable[]> {
   const cleanFilters = {
     ...filters,
-    q: filters.q?.replace(/[<>]/g, ''), // Supprimer < et >
+    q: filters.q?.replace(/[<>]/g, ''),
     limit: filters.limit || 5000,
-    offset: filters.offset || 0
+    offset: filters.offset || 0,
   };
 
   const params = buildParams(cleanFilters);
   const qs = params.toString();
   const url = `${API_URL}/api/dossiers/${qs ? `?${qs}` : ""}`;
 
-  console.log("📥 Fetching dossiers:", url); // Pour debug
+  console.log("📥 Fetching dossiers:", url);
 
-  const response = await fetch(url, { 
+  const response = await fetch(url, {
     method: "GET",
+    cache: "no-store",
+    signal,                      // ← transmis au fetch natif
     headers: {
       ...getAuthHeaders(),
-    }
+    },
   });
+
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(`Erreur ${response.status}: ${errorText}`);
   }
+
   return response.json();
 }
 
@@ -215,7 +223,6 @@ export async function listDossiers(filters: DossiersFilters = {}): Promise<Dossi
 function extractFilenameFromContentDisposition(contentDisposition: string | null): string | null {
   if (!contentDisposition) return null;
   
-  // Plusieurs patterns possibles
   const patterns = [
     /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/,
     /filename="([^"]+)"/,
@@ -293,7 +300,7 @@ export async function exportDossiersXlsx(filters: DossiersFilters = {}): Promise
 ========================= */
 
 export interface ImportCsvOptions {
-  type: "PRAXEDO" | "PIDI" | "ORANGE_PPD" | "PRAXEDO_CR10" | "COMMENTAIRE_TECH";  // ✅ Ajout du nouveau type
+  type: "PRAXEDO" | "PIDI" | "ORANGE_PPD" | "PRAXEDO_CR10" | "COMMENTAIRE_TECH";
   file: File;
   delimiter?: ";" | "," | "\t" | "|";
   signal?: AbortSignal;
@@ -314,7 +321,6 @@ export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvRes
   formData.append("file", file);
   formData.append("delimiter", delimiter);
 
-  // ✅ Déterminer le bon endpoint selon le type
   let endpoint: string;
   
   switch (type) {
@@ -328,7 +334,7 @@ export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvRes
       endpoint = `${API_URL}/api/import/praxedo-cr10`;
       break;
     case "COMMENTAIRE_TECH":
-      endpoint = `${API_URL}/api/import/commentaire-tech-cr10`;  // ✅ Nouvel endpoint
+      endpoint = `${API_URL}/api/import/commentaire-tech-cr10`;
       break;
     case "ORANGE_PPD":
     default:
@@ -346,7 +352,7 @@ export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvRes
       signal,
       headers: {
         ...getAuthHeaders(),
-      }
+      },
     });
 
     if (!response.ok) {
@@ -371,12 +377,11 @@ export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvRes
   }
 }
 
-// ✅ Fonctions helpers (inchangées)
 export const uploadPraxedo = (file: File) => importCsv({ type: "PRAXEDO", file });
 export const uploadPidi = (file: File) => importCsv({ type: "PIDI", file });
 export const uploadOrangePpd = (file: File) => importCsv({ type: "ORANGE_PPD", file });
 export const uploadPraxedoCr10 = (file: File) => importCsv({ type: "PRAXEDO_CR10", file });
-export const uploadCommentaireTech = (file: File) => importCsv({ type: "COMMENTAIRE_TECH", file });  // ✅ Nouvelle fonction helper
+export const uploadCommentaireTech = (file: File) => importCsv({ type: "COMMENTAIRE_TECH", file });
 
 /* =========================
    ORANGE PPD (CSV + XLSX)
@@ -481,6 +486,7 @@ export async function compareOrangePpdTree(
   if (params.onlyMismatch) qs.set("only_mismatch", "true");
 
   const response = await fetch(`${API_URL}/api/orange-ppd/compare-tree${qs.toString() ? `?${qs}` : ""}`, {
+    cache: "no-store",
     headers: getAuthHeaders(),
   });
 
@@ -490,9 +496,9 @@ export async function compareOrangePpdTree(
 
   return response.json();
 }
+
 /**
  * Upload XLSX Orange PPD (PPDATEL multi-feuille)
- * Endpoint backend: /api/orange-ppd/import-excel
  */
 export async function uploadOrangePpdExcel(file: File): Promise<ImportCsvResult> {
   const formData = new FormData();
@@ -503,7 +509,7 @@ export async function uploadOrangePpdExcel(file: File): Promise<ImportCsvResult>
     body: formData,
     headers: {
       ...getAuthHeaders(),
-    }
+    },
   });
 
   if (!response.ok) {
@@ -515,11 +521,9 @@ export async function uploadOrangePpdExcel(file: File): Promise<ImportCsvResult>
 }
 
 /**
- * ✅ PATCH FRONT (recommandé) : un seul fetch, un seul tableau
- * CSV + XLSX merged list - version optimisée avec un seul appel API
+ * Liste fusionnée CSV + XLSX (un seul appel API, déjà triée et limitée)
  */
 export async function listOrangeImports(limit = 30): Promise<OrangePpdImportSummary[]> {
-  // Un seul appel API qui renvoie déjà les données fusionnées et triées
   const res = await fetch(`${API_URL}/api/orange-ppd/imports?limit=${limit}`, {
     cache: "no-store",
     headers: getAuthHeaders(),
@@ -529,11 +533,11 @@ export async function listOrangeImports(limit = 30): Promise<OrangePpdImportSumm
     throw new Error(await res.text());
   }
   
-  return res.json(); // => merged CSV + XLSX (déjà trié et limité)
+  return res.json();
 }
 
 /**
- * ⚠️ Gardée pour compatibilité avec d'anciennes pages, mais NE PLUS UTILISER
+ * ⚠️ Gardée pour compatibilité avec d'anciennes pages — NE PLUS UTILISER
  * dans la page de comparaison.
  */
 export async function listOrangeExcelImports(limit = 30): Promise<OrangePpdImportSummary[]> {
@@ -548,7 +552,6 @@ export async function listOrangeExcelImports(limit = 30): Promise<OrangePpdImpor
 
 /**
  * Helper de dédoublonnage par import_id (anti-doublon)
- * À utiliser dans le setState si nécessaire
  */
 export function dedupeByImportId(items: any[]) {
   const m = new Map<string, any>();
@@ -564,6 +567,7 @@ export async function listOrangePpdOptions(importId?: string): Promise<string[]>
   if (importId) qs.set("import_id", importId);
 
   const response = await fetch(`${API_URL}/api/orange-ppd/ppd-options${qs.toString() ? `?${qs}` : ""}`, {
+    cache: "no-store",
     headers: getAuthHeaders(),
   });
   if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
@@ -579,6 +583,7 @@ export async function compareOrangePpd(
   if (params.onlyMismatch) qs.set("only_mismatch", "true");
 
   const response = await fetch(`${API_URL}/api/orange-ppd/compare${qs.toString() ? `?${qs}` : ""}`, {
+    cache: "no-store",
     headers: getAuthHeaders(),
   });
   if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
@@ -593,6 +598,7 @@ export async function compareOrangePpdSummary(
   if (params.ppd?.trim()) qs.set("ppd", params.ppd.trim());
 
   const res = await fetch(`${API_URL}/api/orange-ppd/compare-summary${qs.toString() ? `?${qs}` : ""}`, {
+    cache: "no-store",
     headers: getAuthHeaders(),
   });
   if (!res.ok) throw new Error(`Erreur ${res.status}: ${await res.text()}`);
