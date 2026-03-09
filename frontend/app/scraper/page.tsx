@@ -1,3 +1,4 @@
+// frontend/app/scraper/page.tsx
 "use client";
 
 import { useState, useRef, useEffect } from "react";
@@ -14,18 +15,26 @@ interface LogMessage {
   row?: Record<string, string>;
 }
 
+type MissingPair = {
+  n_cac: string;
+  releve: string;
+  numero_ppd_orange?: string | null;
+};
+
 // ─── Colonnes du tableau (noms normalisés par _norm_key côté backend) ─────────
-// Quand les colonnes sont toutes actives dans Praxedo, on a ~46 colonnes.
-// Le frontend affiche ce qui est disponible selon les clés reçues.
+
 const EXCEL_HEADERS = [
   "RELEVE_INPUT",
+  "EXPECTED_RELEVE",
+  "EXPECTED_CAC",
+  "EXPECTED_PPD",
   "CONTRAT", "N_FLUX_PIDI", "TYPE_D_ATTACHEMENT", "STATUT_ATTACHEMENT",
   "ND", "CODE_SECTEUR", "N_OT", "N_OEIE", "CODES_CHANTIER_DE_GESTION", "AGENCE",
   "N_ATTACHEMENT", "CODE_POSTAL", "CODE_INSEE", "DOSSIER_TECH", "SOUS_TRAITANT",
   "CODE_GPC", "CODE_ETR", "TECHNICIEN", "UI",
   "NUM_PPD", "ACTIVITE_PRODUIT", "NUM_AS", "CODE_CENTRE",
   "DEBUT_CHANTIER", "FIN_CHANTIER",
-  "NUM_CAC",  // ← la clé qui nous intéresse pour le matching Orange
+  "NUM_CAC",
   "COM_INTERNE", "COM_OEIE", "COM_ATTELEM", "MOTIF_FACT", "CATEGORIE",
   "CHARGE_AFFAIRES", "CAUSE_REJET", "COM_ACQUITTEMENT",
   "DATE_CREATION", "DERNIERE_SAISIE", "DATE_SOUMISSION", "DATE_VALIDATION",
@@ -37,19 +46,46 @@ const EXCEL_HEADERS = [
 
 export default function ScraperPage() {
   const [relevesInput, setRelevesInput] = useState("");
-  const [isScraping, setIsScraping]     = useState(false);
-  const [logs, setLogs]                 = useState<LogMessage[]>([]);
-  const [results, setResults]           = useState<Record<string, string>[]>([]);
-  const [isInjecting, setIsInjecting]   = useState(false);
+  const [itemsToScrape, setItemsToScrape] = useState<MissingPair[]>([]);
+  const [isScraping, setIsScraping] = useState(false);
+  const [logs, setLogs] = useState<LogMessage[]>([]);
+  const [results, setResults] = useState<Record<string, string>[]>([]);
+  const [isInjecting, setIsInjecting] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  const relevesList = relevesInput.split("\n").map((r) => r.trim()).filter(Boolean);
+  const relevesList = relevesInput
+    .split("\n")
+    .map((r) => r.trim())
+    .filter(Boolean);
 
-  // Pré-remplir depuis /dossiers (bouton "Scraper les manquants")
+  // Pré-remplir depuis /dossiers (nouveau flux: couples CAC/relevé)
   useEffect(() => {
+    const rawPairs = sessionStorage.getItem("kyntus_missing_pairs");
+    if (rawPairs) {
+      try {
+        const arr = JSON.parse(rawPairs) as MissingPair[];
+        const cleaned = arr.filter((x) => (x?.releve || "").trim());
+        setItemsToScrape(cleaned);
+        setRelevesInput(cleaned.map((x) => x.releve.trim()).join("\n"));
+      } catch {
+        // ignore
+      }
+      sessionStorage.removeItem("kyntus_missing_pairs");
+      sessionStorage.removeItem("kyntus_missing_releves");
+      return;
+    }
+
+    // Compatibilité ancienne version
     const missing = sessionStorage.getItem("kyntus_missing_releves");
     if (missing) {
       setRelevesInput(missing);
+      setItemsToScrape(
+        missing
+          .split("\n")
+          .map((r) => r.trim())
+          .filter(Boolean)
+          .map((releve) => ({ n_cac: "", releve, numero_ppd_orange: null }))
+      );
       sessionStorage.removeItem("kyntus_missing_releves");
     }
   }, []);
@@ -71,12 +107,15 @@ export default function ScraperPage() {
     setIsInjecting(true);
     setLogs((prev) => [
       ...prev,
-      { id: "pidi-start", status: "info", message: `🔄 Injection PIDI en base (${rows.length} ligne(s))…` },
+      {
+        id: "pidi-start",
+        status: "info",
+        message: `🔄 Injection PIDI en base (${rows.length} ligne(s))…`,
+      },
     ]);
 
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8100";
-      // Payload : [{ data: { N_FLUX_PIDI: "...", NUM_CAC: "...", RELEVE_INPUT: "...", ... } }]
       const payload = rows.map((row) => ({ data: row }));
 
       const res = await fetch(`${apiUrl}/api/scraper/save-pidi`, {
@@ -102,7 +141,11 @@ export default function ScraperPage() {
     } catch (err: any) {
       setLogs((prev) => [
         ...prev,
-        { id: "pidi-err", status: "error", message: `❌ Erreur injection PIDI : ${err.message}` },
+        {
+          id: "pidi-err",
+          status: "error",
+          message: `❌ Erreur injection PIDI : ${err.message}`,
+        },
       ]);
     } finally {
       setIsInjecting(false);
@@ -121,24 +164,45 @@ export default function ScraperPage() {
     const collected: Record<string, string>[] = [];
 
     try {
+      const payloadItems: MissingPair[] =
+        itemsToScrape.length > 0
+          ? itemsToScrape
+              .filter((x) => (x.releve || "").trim())
+              .map((x) => ({
+                n_cac: (x.n_cac || "").trim(),
+                releve: (x.releve || "").trim(),
+                numero_ppd_orange: x.numero_ppd_orange ? String(x.numero_ppd_orange).trim() : null,
+              }))
+          : relevesList.map((releve) => ({
+              n_cac: "",
+              releve,
+              numero_ppd_orange: null,
+            }));
+
       const response = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8100"}/api/scraper`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-          body: JSON.stringify({ releves: relevesList }),
+          body: JSON.stringify({ items: payloadItems }),
         }
       );
 
       if (!response.ok) {
-        if (response.status === 401) throw new Error("Non autorisé. Veuillez vous reconnecter.");
-        throw new Error(`Erreur serveur : ${response.status}`);
+        if (response.status === 401) {
+          throw new Error("Non autorisé. Veuillez vous reconnecter.");
+        }
+        const errText = await response.text().catch(() => "");
+        throw new Error(errText || `Erreur serveur : ${response.status}`);
       }
-      if (!response.body) throw new Error("Réponse de l'API vide.");
 
-      const reader  = response.body.getReader();
+      if (!response.body) {
+        throw new Error("Réponse de l'API vide.");
+      }
+
+      const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      let buffer    = "";
+      let buffer = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -150,9 +214,13 @@ export default function ScraperPage() {
 
         for (const line of lines) {
           if (!line.trim()) continue;
+
           try {
             const data = JSON.parse(line);
-            const newLog: LogMessage = { id: Math.random().toString(36).slice(2, 9), ...data };
+            const newLog: LogMessage = {
+              id: Math.random().toString(36).slice(2, 9),
+              ...data,
+            };
             setLogs((prev) => [...prev, newLog]);
 
             if (data.status === "result" && data.row) {
@@ -168,7 +236,11 @@ export default function ScraperPage() {
     } catch (error: any) {
       setLogs((prev) => [
         ...prev,
-        { id: "fatal", status: "fatal", message: error.message || "Erreur de connexion." },
+        {
+          id: "fatal",
+          status: "fatal",
+          message: error.message || "Erreur de connexion.",
+        },
       ]);
     } finally {
       setIsScraping(false);
@@ -183,13 +255,11 @@ export default function ScraperPage() {
   const exportCSV = () => {
     if (results.length === 0) return;
 
-    // Utiliser les colonnes réellement présentes dans les données (union de toutes les clés)
-    const allKeys = Array.from(new Set(results.flatMap(r => Object.keys(r))));
-    // Mettre RELEVE_INPUT en premier, puis le reste dans l'ordre EXCEL_HEADERS, puis les inconnues
+    const allKeys = Array.from(new Set(results.flatMap((r) => Object.keys(r))));
     const orderedKeys = [
       "RELEVE_INPUT",
-      ...EXCEL_HEADERS.filter(h => h !== "RELEVE_INPUT" && allKeys.includes(h)),
-      ...allKeys.filter(k => !EXCEL_HEADERS.includes(k) && k !== "RELEVE_INPUT"),
+      ...EXCEL_HEADERS.filter((h) => h !== "RELEVE_INPUT" && allKeys.includes(h)),
+      ...allKeys.filter((k) => !EXCEL_HEADERS.includes(k) && k !== "RELEVE_INPUT"),
     ];
 
     const BOM = "\uFEFF";
@@ -203,9 +273,9 @@ export default function ScraperPage() {
       ].join("\n");
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url  = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.href  = url;
+    link.href = url;
     link.setAttribute("download", `kyntus_pidi_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
@@ -213,16 +283,16 @@ export default function ScraperPage() {
     URL.revokeObjectURL(url);
   };
 
-  // ─── Colonnes à afficher dans le tableau (celles qui ont au moins une valeur) ──
-  const displayHeaders = EXCEL_HEADERS.filter(h =>
-    results.some(r => r[h] && r[h].trim())
+  // ─── Colonnes à afficher dans le tableau ──────────────────────────────────
+
+  const displayHeaders = EXCEL_HEADERS.filter((h) =>
+    results.some((r) => r[h] && r[h].trim())
   );
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen p-4 md:p-8 space-y-8 max-w-[1600px] mx-auto bg-gray-50/50">
-
       <style jsx global>{`
         .glass-panel {
           background: rgba(255, 255, 255, 0.7);
@@ -234,12 +304,24 @@ export default function ScraperPage() {
           background: #0f172a;
           background-image: radial-gradient(circle at 50% 0%, #1e293b 0%, transparent 70%);
         }
-        .animate-scanline { animation: scanline 3s linear infinite; }
+        .animate-scanline {
+          animation: scanline 3s linear infinite;
+        }
         @keyframes scanline {
-          0%   { transform: translateY(-100%); opacity: 0; }
-          10%  { opacity: 1; }
-          90%  { opacity: 1; }
-          100% { transform: translateY(400px); opacity: 0; }
+          0% {
+            transform: translateY(-100%);
+            opacity: 0;
+          }
+          10% {
+            opacity: 1;
+          }
+          90% {
+            opacity: 1;
+          }
+          100% {
+            transform: translateY(400px);
+            opacity: 0;
+          }
         }
         .btn-magic {
           background-size: 200% auto;
@@ -251,13 +333,22 @@ export default function ScraperPage() {
           box-shadow: 0 10px 20px -5px rgba(255, 140, 66, 0.4);
           transform: translateY(-2px);
         }
-        .glow-text { text-shadow: 0 0 10px currentColor; }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+        .glow-text {
+          text-shadow: 0 0 10px currentColor;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 6px;
+          height: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #374151;
+          border-radius: 3px;
+        }
       `}</style>
 
-      {/* ── Header ── */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold mb-3">
@@ -275,8 +366,6 @@ export default function ScraperPage() {
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
-
-        {/* ── Input ── */}
         <div className="xl:col-span-4 space-y-6 flex flex-col h-full">
           <Card className="glass-panel border-0 flex-1 flex flex-col overflow-hidden">
             <CardHeader className="pb-4 border-b border-gray-100/50 bg-white/40">
@@ -284,14 +373,21 @@ export default function ScraperPage() {
                 <FileDigit className="w-5 h-5 text-[#ff8c42]" />
                 Input Source
               </CardTitle>
-              <CardDescription>Collez les relevés. L'outil s'occupe de tout.</CardDescription>
+              <CardDescription>
+                Collez les relevés ou utilisez les couples CAC / relevé envoyés depuis la page dossiers.
+              </CardDescription>
             </CardHeader>
+
             <CardContent className="p-5 flex-1 flex flex-col gap-4">
               <div className="relative flex-1 group">
                 <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-200 to-orange-200 rounded-xl opacity-0 group-focus-within:opacity-100 transition duration-500 blur-sm" />
                 <textarea
                   value={relevesInput}
-                  onChange={(e) => setRelevesInput(e.target.value)}
+                  onChange={(e) => {
+                    setRelevesInput(e.target.value);
+                    // Si l’utilisateur modifie manuellement la liste, on repart sur le mode manuel
+                    setItemsToScrape([]);
+                  }}
                   disabled={isScraping || isInjecting}
                   placeholder={"42AA4322\n42AA4323\n..."}
                   className="relative w-full h-full min-h-[250px] p-4 border-gray-200 rounded-xl resize-none focus:ring-0 focus:border-transparent font-mono text-sm leading-relaxed text-gray-800 bg-white/90 shadow-inner"
@@ -303,6 +399,12 @@ export default function ScraperPage() {
                 <span className="text-sm font-medium text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
                   {relevesList.length} relevé(s)
                 </span>
+
+                {itemsToScrape.length > 0 && (
+                  <span className="text-xs font-medium text-blue-700 bg-blue-50 px-3 py-1 rounded-full border border-blue-200">
+                    {itemsToScrape.length} couple(s) CAC / relevé chargés
+                  </span>
+                )}
               </div>
 
               <button
@@ -326,7 +428,6 @@ export default function ScraperPage() {
           </Card>
         </div>
 
-        {/* ── Terminal ── */}
         <div className="xl:col-span-8 flex flex-col h-full">
           <Card className="border-0 shadow-2xl rounded-xl overflow-hidden flex-1 flex flex-col">
             <div className="bg-gray-900 px-4 py-3 flex items-center justify-between border-b border-gray-800">
@@ -335,10 +436,12 @@ export default function ScraperPage() {
                 <div className="w-3 h-3 rounded-full bg-yellow-500" />
                 <div className="w-3 h-3 rounded-full bg-green-500" />
               </div>
+
               <div className="flex items-center gap-2 text-gray-400 text-xs font-mono">
                 <TerminalSquare className="w-4 h-4" />
                 kyntus-scraper-cli ~ bash
               </div>
+
               <div>
                 {isScraping || isInjecting ? (
                   <span className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold text-green-400 bg-green-400/10 px-2 py-0.5 rounded border border-green-400/20">
@@ -371,6 +474,7 @@ export default function ScraperPage() {
                     <span className="text-gray-600 shrink-0 select-none text-xs mt-0.5">
                       {new Date().toLocaleTimeString()}
                     </span>
+
                     <div className="flex-1 break-words">
                       {log.status === "info" && (
                         <span className="text-blue-300">
@@ -378,26 +482,30 @@ export default function ScraperPage() {
                           {log.message}
                         </span>
                       )}
+
                       {log.status === "progress" && (
                         <span className="text-yellow-300">
                           <span className="text-yellow-600 font-bold mr-1">[*]</span>
-                          <span className="bg-yellow-900/30 px-1 rounded text-yellow-100">{log.releve}</span>
-                          {" "}{log.message}
+                          <span className="bg-yellow-900/30 px-1 rounded text-yellow-100">{log.releve}</span>{" "}
+                          {log.message}
                         </span>
                       )}
+
                       {log.status === "result" && (
                         <span className="text-green-400 glow-text">
                           <span className="text-green-500 font-bold mr-1">[+]</span>
                           SUCCESS: {log.releve}
                           {log.row && (
                             <span className="ml-2 text-green-300 opacity-70 text-xs">
-                              → {Object.values(log.row).filter(v => v).length} champs
+                              → {Object.values(log.row).filter((v) => v).length} champs
                               {log.row["N_FLUX_PIDI"] ? ` · FLUX ${log.row["N_FLUX_PIDI"]}` : ""}
                               {log.row["NUM_CAC"] ? ` · CAC ${log.row["NUM_CAC"]}` : " · ⚠️ CAC vide"}
+                              {log.row["EXPECTED_CAC"] ? ` · ATTENDU ${log.row["EXPECTED_CAC"]}` : ""}
                             </span>
                           )}
                         </span>
                       )}
+
                       {log.status === "error" && (
                         <span className="text-red-400">
                           <span className="text-red-500 font-bold mr-1">[-]</span>
@@ -405,11 +513,13 @@ export default function ScraperPage() {
                           {log.message}
                         </span>
                       )}
+
                       {log.status === "fatal" && (
                         <span className="text-red-500 font-bold bg-red-900/20 px-2 py-1 rounded border border-red-500/30 inline-block w-full">
                           [FATAL] {log.message}
                         </span>
                       )}
+
                       {log.status === "done" && (
                         <span className="text-emerald-400 font-bold mt-2 block p-2 bg-emerald-900/20 border border-emerald-500/30 rounded">
                           $ {log.message}
@@ -433,7 +543,6 @@ export default function ScraperPage() {
         </div>
       </div>
 
-      {/* ── Tableau de résultats ── */}
       {results.length > 0 && (
         <div className="animate-in fade-in slide-in-from-bottom-8 duration-700">
           <Card className="border-0 shadow-2xl rounded-xl overflow-hidden bg-white">
@@ -445,13 +554,16 @@ export default function ScraperPage() {
                   </div>
                   Données synchronisées avec Kyntus DB
                 </CardTitle>
+
                 <CardDescription className="mt-1 text-sm font-medium">
-                  <span className="text-blue-600 font-bold">{results.length}</span> ligne(s) · {" "}
+                  <span className="text-blue-600 font-bold">{results.length}</span> ligne(s) ·{" "}
                   <span className="text-green-600 font-bold">
-                    {results.filter(r => r["NUM_CAC"] && r["NUM_CAC"].trim()).length}
-                  </span> avec CAC
+                    {results.filter((r) => r["NUM_CAC"] && r["NUM_CAC"].trim()).length}
+                  </span>{" "}
+                  avec CAC
                 </CardDescription>
               </div>
+
               <button
                 onClick={exportCSV}
                 className="flex items-center gap-2 bg-gray-900 text-white px-5 py-2.5 rounded-xl hover:bg-gray-800 font-bold transition-all shadow-md active:scale-95"
@@ -466,13 +578,15 @@ export default function ScraperPage() {
                 <table className="w-full text-sm border-collapse">
                   <thead className="bg-gray-100/80 sticky top-0 z-10 backdrop-blur-md">
                     <tr>
-                      {/* Afficher uniquement les colonnes qui ont des données */}
                       {displayHeaders.map((header) => (
                         <th
                           key={header}
                           className={`p-3 text-left font-bold border-b border-r border-gray-200 last:border-r-0 whitespace-nowrap text-xs tracking-wider ${
-                            header === "NUM_CAC" ? "text-orange-600 bg-orange-50" :
-                            header === "RELEVE_INPUT" ? "text-blue-700" : "text-gray-600"
+                            header === "NUM_CAC" || header === "EXPECTED_CAC"
+                              ? "text-orange-600 bg-orange-50"
+                              : header === "RELEVE_INPUT" || header === "EXPECTED_RELEVE"
+                              ? "text-blue-700"
+                              : "text-gray-600"
                           }`}
                         >
                           {header}
@@ -480,6 +594,7 @@ export default function ScraperPage() {
                       ))}
                     </tr>
                   </thead>
+
                   <tbody className="divide-y divide-gray-100">
                     {results.map((row, rowIdx) => (
                       <tr key={rowIdx} className="hover:bg-blue-50/40 transition-colors group">
@@ -487,8 +602,11 @@ export default function ScraperPage() {
                           <td
                             key={header}
                             className={`p-3 border-r border-gray-100 last:border-r-0 whitespace-nowrap overflow-hidden text-ellipsis max-w-[250px] ${
-                              header === "NUM_CAC" ? "bg-orange-50/50 font-mono text-orange-700" :
-                              header === "RELEVE_INPUT" ? "font-bold text-[#1e3a5f]" : "text-gray-700"
+                              header === "NUM_CAC" || header === "EXPECTED_CAC"
+                                ? "bg-orange-50/50 font-mono text-orange-700"
+                                : header === "RELEVE_INPUT" || header === "EXPECTED_RELEVE"
+                                ? "font-bold text-[#1e3a5f]"
+                                : "text-gray-700"
                             }`}
                             title={row[header] || ""}
                           >

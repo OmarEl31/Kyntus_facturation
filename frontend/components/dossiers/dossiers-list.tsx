@@ -55,6 +55,8 @@ function badgeClass(kind: BadgeKind) {
   }
 }
 
+
+
 function Badge({ txt, kind = "gray" }: { txt: string; kind?: BadgeKind }) {
   return (
     <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${badgeClass(kind)}`}>
@@ -292,27 +294,31 @@ function Pagination({ page, pageCount, onPrev, onNext, onGo }: {
 
 function reasonLabel(r: string) {
   switch ((r || "").toUpperCase()) {
-    case "OT_INEXISTANT":          return "OT inexistant";
-    case "CROISEMENT_INCOMPLET":   return "Croisement incomplet";
+    case "OT_INEXISTANT":           return "OT inexistant";
+    case "CROISEMENT_INCOMPLET":    return "Croisement incomplet";
     case "COMPARAISON_INCOHERENTE": return "Comparaison incohérente";
-    case "RELEVE_ABSENT_PIDI":     return "Relevé absent PIDI";
-    case "ABSENT_PIDI":            return "Absent PIDI";
-    case "OK":                     return "OK";
+    case "RELEVE_ABSENT_PIDI":      return "Relevé absent PIDI";
+    case "CAC_ABSENT_PIDI":         return "CAC absent PIDI";
+    case "ABSENT_PIDI":             return "Absent PIDI";
+    case "OK":                      return "OK";
     default: return r || "—";
   }
 }
-
 function orangeRowBg(reason: string) {
   const r = (reason || "").toUpperCase();
-  if (r === "RELEVE_ABSENT_PIDI" || r === "ABSENT_PIDI") return "bg-red-50/40 hover:bg-red-100/50";
-  if (r === "OT_INEXISTANT" || r === "CROISEMENT_INCOMPLET" || r === "COMPARAISON_INCOHERENTE") return "bg-amber-50/40 hover:bg-amber-100/50";
+  if (r === "RELEVE_ABSENT_PIDI" || r === "CAC_ABSENT_PIDI" || r === "ABSENT_PIDI") {
+    return "bg-red-50/40 hover:bg-red-100/50";
+  }
+  if (r === "OT_INEXISTANT" || r === "CROISEMENT_INCOMPLET" || r === "COMPARAISON_INCOHERENTE") {
+    return "bg-amber-50/40 hover:bg-amber-100/50";
+  }
   return "bg-green-50/30 hover:bg-green-100/50";
 }
 
 function orangeReasonBadgeKind(reason: string): BadgeKind {
   const r = (reason || "").toUpperCase();
   if (r === "OK") return "green";
-  if (r === "RELEVE_ABSENT_PIDI" || r === "ABSENT_PIDI") return "red";
+  if (r === "RELEVE_ABSENT_PIDI" || r === "CAC_ABSENT_PIDI" || r === "ABSENT_PIDI") return "red";
   if (r === "COMPARAISON_INCOHERENTE") return "yellow";
   return "yellow";
 }
@@ -520,16 +526,31 @@ export default function DossiersList() {
   }, [orangeRows, orangeStatus, orangeCroisementFilter, orangeOtSearch, orangeNdSearch]);
 
   // ─── Scrape manquants ───────────────────────────────────────────────────
-  const handleScrapeMissing = () => {
-    const missing = orangeRowsFiltered
-      .filter((r) => ["RELEVE_ABSENT_PIDI", "OT_INEXISTANT", "CROISEMENT_INCOMPLET", "ABSENT_PIDI"].includes(r.reason))
-      .map((r) => r.releve || r.num_ot)
-      .filter(Boolean);
-    const unique = Array.from(new Set(missing));
-    if (!unique.length) { alert("✅ Aucun relevé manquant à scraper !"); return; }
-    sessionStorage.setItem("kyntus_missing_releves", unique.join("\n"));
-    router.push("/scraper");
-  };
+const handleScrapeMissing = () => {
+  const missing = orangeRowsFiltered
+    .filter((r) =>
+      ["RELEVE_ABSENT_PIDI", "CAC_ABSENT_PIDI"].includes(String(r.reason || "").toUpperCase())
+    )
+    .map((r) => ({
+      n_cac: String(r.num_ot || "").trim(),
+      releve: String(r.releve || "").trim(),
+      numero_ppd_orange: r.numero_ppd_orange ? String(r.numero_ppd_orange).trim() : null,
+    }))
+    .filter((x) => x.n_cac && x.releve);
+
+  const unique = Array.from(
+    new Map(missing.map((x) => [`${x.n_cac}__${x.releve}`, x])).values()
+  );
+
+  if (!unique.length) {
+    alert("✅ Aucun couple CAC / relevé manquant à scraper !");
+    return;
+  }
+
+  sessionStorage.setItem("kyntus_missing_pairs", JSON.stringify(unique));
+  sessionStorage.removeItem("kyntus_missing_releves");
+  router.push("/scraper");
+};
 
   // ─── Truncate ───────────────────────────────────────────────────────────
   const handleTruncateAll = async () => {
