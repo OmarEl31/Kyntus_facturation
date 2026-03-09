@@ -74,7 +74,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onLoginSuccess }) => {
         <AuthInput 
           label="Email" 
           type="email" 
-          placeholder="ouail@kyntus.com"
+          placeholder="exemple@kyntus.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required

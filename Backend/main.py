@@ -1,12 +1,12 @@
 # Backend/main.py
 from fastapi import FastAPI
-from routes import api_router
-
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
+from routes import api_router
 from core.config import get_settings
 from database.connection import engine
-from models.user import Base  # <-- Jbnaha bach n-creyiw les tables jdad
+from models.user import Base
 
 from routes.dossiers import router as dossiers_router
 from routes.imports import router as imports_router
@@ -14,10 +14,21 @@ from routes.regles import router as regles_router
 from routes.debug_db import router as debug_router
 from routes.orange_ppd import router as orange_ppd_router
 from routes.praxedo_scraper import router as praxedo_scraper_router
-from routes.auth import router as auth_router  # <-- Router dyal l'Auth jdid
+from routes.auth import router as auth_router
 from routes.admin import router as admin_router
 
-# Hada kay-creyer ay table jdida (bhal 'users') f PostgreSQL ila makantch
+SCHEMAS = [
+    "referentiels",
+    "raw",
+    "norm",
+    "canonique",
+    "pilotage",
+]
+
+with engine.begin() as conn:
+    for schema in SCHEMAS:
+        conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Kyntus Facturation API")
@@ -47,8 +58,7 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
-# N-ajoutiw les routers l'application
-app.include_router(auth_router)  # <-- L'Auth houwa lewel
+app.include_router(auth_router)
 app.include_router(dossiers_router)
 app.include_router(imports_router)
 app.include_router(regles_router)
@@ -58,9 +68,11 @@ app.include_router(praxedo_scraper_router)
 app.include_router(admin_router)
 app.include_router(api_router)
 
+
 @app.get("/")
 def root():
     return {"status": "ok"}
+
 
 @app.get("/health")
 def health():
