@@ -18,6 +18,11 @@ from models.raw_orange_ppd_import import RawOrangePpdImport
 from models.raw_orange_ppd_row import RawOrangePpdRow
 from models.raw_orange_ppd_pivot_row import RawOrangePpdPivotRow
 
+# --- NOUVEAU: Imports pour la protection admin ---
+from routes.auth import require_admin
+from models.user import User
+# ------------------------------------------------
+
 router = APIRouter(prefix="/api/orange-ppd", tags=["orange-ppd"])
 
 
@@ -446,6 +451,7 @@ async def import_orange_ppd(
     imported_by: str | None = Query(None),
     sheet: str | None = Query(None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),  # <-- NOUVEAU: Protection admin
 ):
     try:
         content = await file.read()
@@ -473,7 +479,11 @@ async def import_orange_ppd(
 # Imports list (CSV + XLSX)
 # --------------------
 @router.get("/imports")
-def list_imports(limit: int = Query(20, ge=1, le=200), db: Session = Depends(get_db)):
+def list_imports(
+    limit: int = Query(20, ge=1, le=200), 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),  # <-- NOUVEAU: Protection admin
+):
     csv_q = (
         db.query(RawOrangePpdImport)
         .order_by(RawOrangePpdImport.imported_at.desc(), RawOrangePpdImport.import_id.desc())
@@ -522,7 +532,11 @@ def list_imports(limit: int = Query(20, ge=1, le=200), db: Session = Depends(get
 
 
 @router.get("/excel-imports")
-def list_excel_imports(limit: int = Query(20, ge=1, le=200), db: Session = Depends(get_db)):
+def list_excel_imports(
+    limit: int = Query(20, ge=1, le=200), 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),  # <-- NOUVEAU: Protection admin
+):
     rows = db.execute(
         text("""
             SELECT import_id, filename, sheet_name, row_count, imported_by, imported_at
@@ -539,7 +553,11 @@ def list_excel_imports(limit: int = Query(20, ge=1, le=200), db: Session = Depen
 # PPD options (CSV only)
 # --------------------
 @router.get("/ppd-options")
-def ppd_options(import_id: str | None = Query(None), db: Session = Depends(get_db)):
+def ppd_options(
+    import_id: str | None = Query(None), 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),  # <-- NOUVEAU: Protection admin
+):
     import_id = _resolve_import_id(db, import_id)
     if not import_id:
         return []
@@ -584,6 +602,7 @@ def compare_orange_ppd(
     ppd: str | None = Query(default=None),
     only_mismatch: bool = Query(default=False),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),  # <-- NOUVEAU: Protection admin
 ):
 
     # ------------------------------------------------------------ XLSX
@@ -709,6 +728,7 @@ def compare_orange_ppd_summary(
     import_id: str | None = Query(default=None),
     ppd: str | None = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),  # <-- NOUVEAU: Protection admin
 ):
     _empty = {
         "orange_total_ht": 0, "orange_total_ttc": 0,
@@ -795,6 +815,7 @@ def compare_orange_ppd_tree(
     ppd: str | None = Query(default=None),
     only_mismatch: bool = Query(default=False),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),  # <-- NOUVEAU: Protection admin
 ):
     """
     Retourne une structure hiérarchique:
@@ -819,7 +840,7 @@ def compare_orange_ppd_tree(
         x = x.upper()
         return x or None
 
-    # -------------------- XLSX ONLY (ton besoin actuel correspond à l’Excel)
+    # -------------------- XLSX ONLY (ton besoin actuel correspond à l'Excel)
     if not _is_xlsx_import(db, import_id):
         raise HTTPException(status_code=400, detail="compare-tree est prévu pour les imports XLSX (Excel).")
 

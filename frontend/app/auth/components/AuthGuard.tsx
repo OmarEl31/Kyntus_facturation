@@ -1,3 +1,4 @@
+//frontend/app/auth/components/AuthGuard.tsx
 "use client";
 import React, { useEffect, useState } from 'react';
 import { AuthForm } from './AuthForm';

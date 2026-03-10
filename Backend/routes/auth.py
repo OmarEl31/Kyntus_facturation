@@ -70,6 +70,26 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 
+def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
+    """
+    Vérifie que l'utilisateur est actif.
+    À utiliser pour les routes qui nécessitent un compte actif.
+    """
+    if not current_user.is_active:
+        raise HTTPException(status_code=403, detail="Utilisateur inactif")
+    return current_user
+
+
+def require_admin(current_user: User = Depends(get_current_active_user)) -> User:
+    """
+    Vérifie que l'utilisateur est administrateur.
+    À utiliser pour les routes d'administration.
+    """
+    if (current_user.role or "").lower() != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    return current_user
+
+
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 def register(user_in: UserCreate, db: Session = Depends(get_db)):
     # Vérifier si email existe déjà
@@ -78,7 +98,12 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Cet email est déjà utilisé.")
 
     hashed_password = get_password_hash(user_in.password)
-    new_user = User(email=user_in.email, hashed_password=hashed_password)
+    new_user = User(
+        email=user_in.email,
+        hashed_password=hashed_password,
+        role="agent",
+        is_active=True,  # Par défaut, un nouvel utilisateur est actif
+    )
 
     db.add(new_user)
     db.commit()
@@ -104,6 +129,24 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
         data={
             "sub": user.email,     # rétro-compatible
             "user_id": user.id,    # ✅ nouveau pour tes routes imports/dossiers
+            "role": user.role,
         }
     )
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.get("/me", response_model=UserOut)
+def read_users_me(current_user: User = Depends(get_current_active_user)):
+    """
+    Récupère les informations de l'utilisateur connecté.
+    Nécessite un compte actif.
+    """
+    return current_user
+
+
+@router.get("/admin-only", response_model=dict)
+def admin_only(current_user: User = Depends(require_admin)):
+    """
+    Route test réservée aux administrateurs.
+    """
+    return {"message": "Bienvenue administrateur", "user": current_user.email}
