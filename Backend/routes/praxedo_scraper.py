@@ -118,6 +118,58 @@ def _normalize_cac(v: str | None) -> Optional[str]:
     return s or None
 
 
+def _normalize_releve_key(v: str | None) -> Optional[str]:
+    if not v:
+        return None
+    s = str(v).strip()
+    s = s.lstrip("0")
+    s = re.sub(r"[^0-9A-Za-z]", "", s)
+    s = s.upper()
+    return s or None
+
+
+def _choose_best_candidate(
+    candidates: List[Dict[str, str]],
+    expected_cac: str | None,
+    expected_releve: str | None,
+) -> Optional[Dict[str, str]]:
+    expected_cac = _normalize_cac(expected_cac)
+    expected_releve_key = _normalize_releve_key(expected_releve)
+
+    # 1) priorité absolue : CAC exact
+    if expected_cac:
+        exact_cac = [
+            c for c in candidates
+            if _normalize_cac(c.get("NUM_CAC")) == expected_cac
+        ]
+        if exact_cac:
+            return exact_cac[0]
+
+    # 2) sinon match sur relevé normalisé
+    if expected_releve_key:
+        exact_releve = [
+            c for c in candidates
+            if _normalize_releve_key(
+                c.get("COMMENT_ACQUI_REJET") or c.get("RELEVE_INPUT")
+            ) == expected_releve_key
+        ]
+        if exact_releve:
+            return exact_releve[0]
+
+    # 3) fallback : ligne la plus riche
+    scored = sorted(
+        candidates,
+        key=lambda c: (
+            1 if c.get("N_FLUX_PIDI") else 0,
+            1 if c.get("NUM_CAC") else 0,
+            1 if c.get("HT") else 0,
+            1 if c.get("BORDEREAU") else 0,
+        ),
+        reverse=True,
+    )
+    return scored[0] if scored else None
+
+
 def _td_text_smart(td) -> str:
     """
     td.text parfois vide (icône/lien). On tente aussi textContent/title.
@@ -312,24 +364,29 @@ def _wait_ajax_done(driver, timeout=45):
 
 def _find_result_rows(driver):
     """
-    Retourne uniquement les vraies lignes résultats de la liste des factures.
+    Retourne les vraies lignes de résultats visibles.
     """
     selectors = [
         "tbody.pure-datatable-data tr",
         "table tbody tr",
+        "div.pure-datatable table tbody tr",
+        "table tr",
     ]
 
     for sel in selectors:
-        rows = driver.find_elements(By.CSS_SELECTOR, sel)
-        clean_rows = []
+        try:
+            rows = driver.find_elements(By.CSS_SELECTOR, sel)
+        except Exception:
+            rows = []
 
+        clean_rows = []
         for r in rows:
             try:
                 txt = (r.text or "").strip()
                 tds = r.find_elements(By.TAG_NAME, "td")
                 if not txt:
                     continue
-                if len(tds) < 6:
+                if len(tds) < 4:
                     continue
                 clean_rows.append(r)
             except Exception:
@@ -339,6 +396,53 @@ def _find_result_rows(driver):
             return clean_rows, sel
 
     return [], ""
+
+
+def _wait_results_or_empty(driver, releve: str, timeout: int = 30) -> tuple[list, str | None]:
+    """
+    Attend soit :
+    - une ligne de résultat contenant le relevé
+    - une table de résultats
+    - ou le message 'Aucune facture'
+    Retourne (rows, error_message_or_none)
+    """
+    end = time.time() + timeout
+    releve = (releve or "").strip()
+
+    while time.time() < end:
+        try:
+            _wait_ajax_done(driver, timeout=3)
+
+            body_text = ""
+            try:
+                body_text = driver.find_element(By.TAG_NAME, "body").text or ""
+            except Exception:
+                pass
+
+            if "Aucune facture" in body_text:
+                return [], "Aucune facture."
+
+            # 1) priorité: ligne contenant explicitement le relevé
+            if releve:
+                xpath_rows = driver.find_elements(
+                    By.XPATH,
+                    f"//tr[td[contains(normalize-space(.), '{releve}')]]"
+                )
+                xpath_rows = [r for r in xpath_rows if (r.text or "").strip()]
+                if xpath_rows:
+                    return xpath_rows, None
+
+            # 2) fallback: toute vraie ligne de tableau
+            rows, _ = _find_result_rows(driver)
+            if rows:
+                return rows, None
+
+        except Exception:
+            pass
+
+        time.sleep(0.5)
+
+    return [], "Aucun tableau détecté."
 
 
 # ───────────────────────────────────────────────────────────────────────────────
@@ -355,7 +459,6 @@ def _open_invoice_search_page(driver, wait):
         )
         driver.execute_script("arguments[0].click();", link)
     except Exception:
-        # Correction de l'URL : praxedo.com (avec le d) au lieu de praxeo.com
         driver.get("https://eu5.praxedo.com/eTech/displayInvoiceSearch.do")
 
     _wait_ajax_done(driver, timeout=30)
@@ -406,37 +509,45 @@ def scrape_generator(items: List[Dict[str, str]], user: str, password: str):
         "&nonce=Ae4aI3FPlBAE0MiCYIQKreokC6z01IxrKPvW3istXr4"
     )
 
-    is_mac = platform.system() == "Darwin"
-    cmd_ctrl = Keys.COMMAND if is_mac else Keys.CONTROL
-
     driver = None
     try:
         yield json.dumps({"status": "info", "message": "Connexion à Selenium (Remote Chrome)..."}) + "\n"
         driver = _build_driver()
-        wait = WebDriverWait(driver, 45)
-
-        yield json.dumps({"status": "info", "message": "Ouverture de la page login..."}) + "\n"
+        yield json.dumps({"status": "info", "message": "Session Selenium créée."}) + "\n"
+        
+        wait = WebDriverWait(driver, 25)
+        yield json.dumps({"status": "info", "message": "Avant ouverture URL login..."}) + "\n"
+        
         driver.get(LOGIN_URL)
-        time.sleep(1)
+        yield json.dumps({"status": "info", "message": f"URL login ouverte: {driver.current_url}"}) + "\n"
 
+        yield json.dumps({"status": "info", "message": "Recherche champ identifiant..."}) + "\n"
         user_input = wait.until(EC.visibility_of_element_located((By.NAME, "identifier")))
+        yield json.dumps({"status": "info", "message": "Champ identifiant trouvé."}) + "\n"
+        
         human_typing(user_input, user)
         user_input.send_keys(Keys.RETURN)
-        time.sleep(1)
 
+        yield json.dumps({"status": "info", "message": "Recherche champ mot de passe..."}) + "\n"
         pwd_input = wait.until(EC.visibility_of_element_located((By.NAME, "credentials.passcode")))
+        yield json.dumps({"status": "info", "message": "Champ mot de passe trouvé."}) + "\n"
+        
         human_typing(pwd_input, password)
         pwd_input.send_keys(Keys.RETURN)
 
         yield json.dumps({"status": "info", "message": "Login en cours... attente redirection."}) + "\n"
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='AdvancedSearchWorkOrder.do']")))
-        time.sleep(0.5)
+        yield json.dumps({"status": "info", "message": "Redirection effectuée, lien AdvancedSearchWorkOrder trouvé."}) + "\n"
 
-        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "a[href*='AdvancedSearchWorkOrder.do']"))).click()
-        time.sleep(0.5)
-        
-        # Aller à la page de recherche facture initiale
+        yield json.dumps({"status": "info", "message": "Clic sur AdvancedSearchWorkOrder..."}) + "\n"
+        wait.until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "a[href*='AdvancedSearchWorkOrder.do']"))
+        ).click()
+        yield json.dumps({"status": "info", "message": "Clic effectué sur AdvancedSearchWorkOrder."}) + "\n"
+
+        yield json.dumps({"status": "info", "message": "Ouverture page recherche facture..."}) + "\n"
         _open_invoice_search_page(driver, wait)
+        yield json.dumps({"status": "info", "message": "Page recherche facture ouverte."}) + "\n"
 
         yield json.dumps({"status": "info", "message": "Début du traitement..."}) + "\n"
 
@@ -454,83 +565,78 @@ def scrape_generator(items: List[Dict[str, str]], user: str, password: str):
                 "message": f"[{i+1}/{len(items)}] Traitement: relevé={releve} / CAC attendu={expected_cac or '—'} ..."
             }) + "\n"
 
-            max_attempts = 1
-            for attempt in range(1, max_attempts + 1):
+            try:
+                yield json.dumps({"status": "info", "message": f"Ouverture formulaire recherche pour {releve}..."}) + "\n"
+                _open_invoice_search_page(driver, wait)
+
+                # reset rapide des champs
+                yield json.dumps({"status": "info", "message": "Reset champ date..."}) + "\n"
+                date_input = wait.until(EC.presence_of_element_located((By.NAME, "minCreationDateStr")))
+                driver.execute_script("arguments[0].value = '';", date_input)
+                driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", date_input)
+                driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", date_input)
+
+                yield json.dumps({"status": "info", "message": "Reset champ commentaire..."}) + "\n"
+                textarea = wait.until(EC.presence_of_element_located((By.NAME, "commentaireNotification")))
+                driver.execute_script("arguments[0].value = '';", textarea)
+                driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", textarea)
+                driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", textarea)
+
+                yield json.dumps({"status": "info", "message": f"Saisie relevé {releve}..."}) + "\n"
+                driver.execute_script("arguments[0].value = arguments[1];", textarea, releve)
+                driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", textarea)
+                driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", textarea)
+
+                # Vérification de la saisie
+                saisie = driver.execute_script("return arguments[0].value;", textarea)
+                if saisie != releve:
+                    yield json.dumps({
+                        "status": "warning", 
+                        "releve": releve, 
+                        "message": f"La saisie du relevé a échoué (attendu='{releve}', obtenu='{saisie}')"
+                    }) + "\n"
+
+                yield json.dumps({"status": "info", "message": f"Lancement recherche pour {releve}..."}) + "\n"
+                yield json.dumps({"status": "info", "message": "Recherche bouton searchBottom..."}) + "\n"
+                search_btn = wait.until(EC.element_to_be_clickable((By.ID, "searchBottom")))
+                yield json.dumps({"status": "info", "message": "Bouton searchBottom trouvé, clic..."}) + "\n"
+                driver.execute_script("arguments[0].click();", search_btn)
+
+                yield json.dumps({"status": "info", "message": "Attente des résultats..."}) + "\n"
+                rows_check, wait_error = _wait_results_or_empty(driver, releve=releve, timeout=20)
+
+                if wait_error and not rows_check:
+                    yield json.dumps({
+                        "status": "error",
+                        "releve": releve,
+                        "message": f"{wait_error} URL={driver.current_url}"
+                    }) + "\n"
+                    continue
+
+                yield json.dumps({"status": "info", "message": f"{len(rows_check)} ligne(s) trouvée(s)"}) + "\n"
+
+                tbody = None
                 try:
-                    # LOG: Ouverture formulaire recherche
-                    yield json.dumps({"status": "info", "message": f"Ouverture formulaire recherche pour {releve}..."}) + "\n"
-                    _open_invoice_search_page(driver, wait)
-
-                    # LOG: Saisie relevé
-                    yield json.dumps({"status": "info", "message": f"Saisie relevé {releve}..."}) + "\n"
-                    
-                    date_input = wait.until(EC.presence_of_element_located((By.NAME, "minCreationDateStr")))
-                    driver.execute_script("arguments[0].value = '';", date_input)
-                    driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", date_input)
-
-                    textarea = wait.until(EC.presence_of_element_located((By.NAME, "commentaireNotification")))
-                    driver.execute_script("arguments[0].value = '';", textarea)
-                    driver.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", textarea)
-                    textarea.click()
-                    textarea.send_keys(releve)
-
-                    # LOG: Lancement recherche
-                    yield json.dumps({"status": "info", "message": f"Lancement recherche pour {releve}..."}) + "\n"
-                    
-                    search_btn = wait.until(EC.element_to_be_clickable((By.ID, "searchBottom")))
-                    driver.execute_script("arguments[0].click();", search_btn)
-
-                    if not _wait_ajax_done(driver, timeout=60):
-                        yield json.dumps({
-                            "status": "error",
-                            "releve": releve,
-                            "message": f"Timeout AJAX après Search (tentative {attempt}/{max_attempts}). URL={driver.current_url}"
-                        }) + "\n"
-                        if attempt < max_attempts:
-                            try:
-                                driver.refresh()
-                                time.sleep(2)
-                                _open_invoice_search_page(driver, wait)
-                                time.sleep(1)
-                            except Exception:
-                                pass
-                            continue
-                        break
-
-                    rows_check, used_sel = _find_result_rows(driver)
-
-                    if not rows_check:
-                        body_text = ""
-                        try:
-                            body_text = driver.find_element(By.TAG_NAME, "body").text or ""
-                        except Exception:
-                            pass
-
-                        if "Aucune facture" in body_text:
-                            yield json.dumps({"status": "error", "releve": releve, "message": "Aucune facture."}) + "\n"
-                            break
-
-                        yield json.dumps({
-                            "status": "error",
-                            "releve": releve,
-                            "message": f"Aucun tableau détecté. sel={used_sel} URL={driver.current_url}"
-                        }) + "\n"
-                        break
-
                     tbody = driver.find_element(By.CSS_SELECTOR, "tbody.pure-datatable-data")
-                    rows = rows_check
-                    base_handle = driver.current_window_handle
+                except Exception:
+                    try:
+                        tbody = driver.find_element(By.CSS_SELECTOR, "table tbody")
+                    except Exception:
+                        tbody = None
 
-                    # Prendre seulement la première ligne utile
-                    target_row = rows[0] if rows else None
-                    if not target_row:
-                        yield json.dumps({
-                            "status": "error",
-                            "releve": releve,
-                            "message": "Aucune vraie ligne résultat exploitable."
-                        }) + "\n"
-                        break
+                rows = rows_check
+                base_handle = driver.current_window_handle
 
+                # Cas simple : une seule ligne -> comportement quasi inchangé
+                if len(rows) == 1:
+                    candidate_rows = [rows[0]]
+                else:
+                    # Cas multi-lignes : on analysera chaque détail pour choisir la bonne
+                    candidate_rows = rows
+
+                candidates: List[Dict[str, str]] = []
+
+                for row_idx, candidate_row in enumerate(candidate_rows, start=1):
                     row_map: Dict[str, str] = {
                         "RELEVE_INPUT": releve,
                         "EXPECTED_RELEVE": releve,
@@ -539,12 +645,15 @@ def scrape_generator(items: List[Dict[str, str]], user: str, password: str):
                     if expected_ppd:
                         row_map["EXPECTED_PPD"] = expected_ppd
 
-                    # lecture des cellules visibles de la ligne
+                    # lecture rapide des cellules visibles de la ligne
                     try:
-                        tds = target_row.find_elements(By.TAG_NAME, "td")
+                        tds = candidate_row.find_elements(By.TAG_NAME, "td")
                         headers = []
                         try:
-                            table = driver.execute_script("return arguments[0].closest('table')", tbody)
+                            table = driver.execute_script(
+                                "return arguments[0].closest('table')",
+                                candidate_row
+                            )
                             ths = table.find_elements(By.CSS_SELECTOR, "thead th") if table else []
                             headers = [(_norm_key(th.text) or f"COL_{idx}") for idx, th in enumerate(ths)]
                         except Exception:
@@ -558,17 +667,11 @@ def scrape_generator(items: List[Dict[str, str]], user: str, password: str):
                     except Exception:
                         pass
 
-                    opened = _open_row_detail(driver, target_row)
+                    opened = _open_row_detail(driver, candidate_row)
                     if not opened:
-                        yield json.dumps({
-                            "status": "error",
-                            "releve": releve,
-                            "message": "Impossible d'ouvrir le détail de l'attachement."
-                        }) + "\n"
-                        break
+                        continue
 
-                    time.sleep(1.0)
-                    _wait_ajax_done(driver, timeout=20)
+                    _wait_ajax_done(driver, timeout=10)
 
                     body_text = ""
                     try:
@@ -577,51 +680,67 @@ def scrape_generator(items: List[Dict[str, str]], user: str, password: str):
                         pass
 
                     detail = _extract_from_detail_text(body_text)
-
                     for k, v in detail.items():
                         if v:
                             row_map[k] = v
 
                     _close_detail_and_back(driver, base_handle)
-                    _wait_ajax_done(driver, timeout=20)
+                    _wait_ajax_done(driver, timeout=8)
 
                     cac = _normalize_cac(_first(row_map, "NUM_CAC", "N_CAC", "CAC", "COMMANDE", "COL_0"))
                     if cac:
                         row_map["NUM_CAC"] = cac
 
-                    yield json.dumps({
-                        "status": "result",
-                        "releve": releve,
-                        "expected_cac": expected_cac,
-                        "row": row_map
-                    }) + "\n"
+                    candidates.append(row_map)
 
-                    yield json.dumps({"status": "info", "message": "Trouvé (1 ligne)."}) + "\n"
-                    break
+                    # si cas simple -> inutile d'aller plus loin
+                    if len(rows) == 1:
+                        break
 
-                except TimeoutException:
+                best = _choose_best_candidate(candidates, expected_cac, releve)
+
+                if not best:
                     yield json.dumps({
                         "status": "error",
                         "releve": releve,
-                        "message": f"Timeout (tentative {attempt}/{max_attempts}). URL={driver.current_url}"
+                        "message": "Aucune ligne exploitable après analyse des résultats."
                     }) + "\n"
-                    if attempt < max_attempts:
-                        try:
-                            driver.refresh()
-                            time.sleep(2)
-                            _open_invoice_search_page(driver, wait)
-                            time.sleep(1)
-                        except Exception:
-                            pass
-                        continue
-                except Exception as e:
-                    yield json.dumps({"status": "error", "releve": releve, "message": str(e)}) + "\n"
-                    break
+                    continue
 
-            time.sleep(random.uniform(0.3, 0.8))
+                yield json.dumps({
+                    "status": "result",
+                    "releve": releve,
+                    "expected_cac": expected_cac,
+                    "row": best
+                }) + "\n"
+
+                yield json.dumps({
+                    "status": "info",
+                    "message": f"Trouvé ({len(candidates)} ligne(s) analysée(s), 1 retenue)."
+                }) + "\n"
+
+            except TimeoutException:
+                yield json.dumps({
+                    "status": "error",
+                    "releve": releve,
+                    "message": f"Timeout. URL={driver.current_url}"
+                }) + "\n"
+                continue
+            except Exception as e:
+                import traceback
+                yield json.dumps({
+                    "status": "error",
+                    "releve": releve,
+                    "message": f"Erreur: {str(e)} | TRACE: {traceback.format_exc()}"
+                }) + "\n"
+                continue
 
     except Exception as e:
-        yield json.dumps({"status": "fatal", "message": f"Erreur critique: {str(e)}"}) + "\n"
+        import traceback
+        yield json.dumps({
+            "status": "fatal", 
+            "message": f"Erreur critique: {str(e)} | TRACE: {traceback.format_exc()}"
+        }) + "\n"
     finally:
         yield json.dumps({"status": "done", "message": "Scraping terminé ! Navigateur fermé."}) + "\n"
         try:
@@ -831,32 +950,48 @@ def save_scraped_pidi_rows(
         db.merge(x)
         saved_full += 1
 
+    # Traitement manuel de pidi_rows (remplace le on_conflict_do_update)
     inserted = 0
-    if pidi_rows:
-        t = RawPidi.__table__
-        stmt = pg_insert(t).values(pidi_rows)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=[t.c.numero_flux_pidi],
-            set_={
-                "contrat": stmt.excluded.contrat,
-                "type_pidi": stmt.excluded.type_pidi,
-                "statut": stmt.excluded.statut,
-                "nd": stmt.excluded.nd,
-                "code_secteur": stmt.excluded.code_secteur,
-                "numero_ot": stmt.excluded.numero_ot,
-                "numero_att": stmt.excluded.numero_att,
-                "agence": stmt.excluded.agence,
-                "numero_ppd": stmt.excluded.numero_ppd,
-                "comment_acqui_rejet": stmt.excluded.comment_acqui_rejet,
-                "n_cac": stmt.excluded.n_cac,
-                "ht": stmt.excluded.ht,
-                "bordereau": stmt.excluded.bordereau,
-                "imported_at": stmt.excluded.imported_at,
-                "user_id": stmt.excluded.user_id,
-            },
-        )
-        db.execute(stmt)
-        inserted = len(pidi_rows)
+    updated = 0
+
+    for row in pidi_rows:
+        flux = (row.get("numero_flux_pidi") or "").strip()
+
+        existing = None
+        if flux and flux != "-1":
+            existing = (
+                db.query(RawPidi)
+                .filter(RawPidi.numero_flux_pidi == flux)
+                .first()
+            )
+
+        if existing:
+            # Mise à jour de l'enregistrement existant
+            existing.contrat = row.get("contrat")
+            existing.type_pidi = row.get("type_pidi")
+            existing.statut = row.get("statut")
+            existing.nd = row.get("nd")
+            existing.code_secteur = row.get("code_secteur")
+            existing.numero_ot = row.get("numero_ot")
+            existing.numero_att = row.get("numero_att")
+            existing.agence = row.get("agence")
+            existing.numero_ppd = row.get("numero_ppd")
+            existing.comment_acqui_rejet = row.get("comment_acqui_rejet")
+            existing.n_cac = row.get("n_cac")
+            existing.ht = row.get("ht")
+            existing.bordereau = row.get("bordereau")
+            existing.imported_at = row.get("imported_at")
+            existing.user_id = row.get("user_id")
+            updated += 1
+        else:
+            # Nouvel enregistrement
+            db.add(RawPidi(**row))
+            inserted += 1
 
     db.commit()
-    return {"ok": True, "saved_full": saved_full, "inserted_pidi": inserted}
+    return {
+        "ok": True,
+        "saved_full": saved_full,
+        "inserted_pidi": inserted,
+        "updated_pidi": updated,
+    }
