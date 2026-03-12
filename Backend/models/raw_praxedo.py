@@ -1,11 +1,13 @@
 from sqlalchemy import Column, Text, TIMESTAMP, Integer, ForeignKey
 from database.connection import Base
 
+
 class RawPraxedo(Base):
     __tablename__ = "praxedo"
     __table_args__ = {"schema": "raw"}
 
     numero = Column(Text, primary_key=True)
+    user_id = Column(Integer, ForeignKey("public.users.id"), primary_key=True)
 
     statut = Column(Text)
     planifiee = Column(Text)
@@ -24,6 +26,3 @@ class RawPraxedo(Base):
     csv_extra = Column(Text)
 
     imported_at = Column(TIMESTAMP)
-    
-    # NOUVEAU: Liens m3a l'user li dar l'import
-    user_id = Column(Integer, ForeignKey("public.users.id"), nullable=True)

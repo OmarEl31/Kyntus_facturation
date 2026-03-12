@@ -1,12 +1,13 @@
-# backend/models/raw_pidi.py
 from sqlalchemy import Column, Text, TIMESTAMP, Numeric, Integer, ForeignKey
 from database.connection import Base
+
 
 class RawPidi(Base):
     __tablename__ = "pidi"
     __table_args__ = {"schema": "raw"}
 
     numero_flux_pidi = Column(Text, primary_key=True)
+    user_id = Column(Integer, ForeignKey("public.users.id"), primary_key=True)
 
     contrat = Column(Text)
     type_pidi = Column(Text)
@@ -32,6 +33,4 @@ class RawPidi(Base):
 
     n_cac = Column(Text, nullable=True)
     comment_acqui_rejet = Column(Text, nullable=True)
-    cause_acqui_rejet = Column(Text, nullable=True)  # ✅ assure-toi qu'il existe aussi en DB
-
-    user_id = Column(Integer, ForeignKey("public.users.id"), nullable=True)
+    cause_acqui_rejet = Column(Text, nullable=True)

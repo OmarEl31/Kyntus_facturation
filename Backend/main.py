@@ -1,4 +1,3 @@
-# Backend/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -16,6 +15,7 @@ from routes.orange_ppd import router as orange_ppd_router
 from routes.praxedo_scraper import router as praxedo_scraper_router
 from routes.auth import router as auth_router
 from routes.admin import router as admin_router
+from routes.import_commentaire_tech import router as commentaire_tech_router
 
 SCHEMAS = [
     "referentiels",
@@ -58,7 +58,10 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
+# Auth d'abord
 app.include_router(auth_router)
+
+# Routes métier
 app.include_router(dossiers_router)
 app.include_router(imports_router)
 app.include_router(regles_router)
@@ -66,6 +69,9 @@ app.include_router(debug_router)
 app.include_router(orange_ppd_router)
 app.include_router(praxedo_scraper_router)
 app.include_router(admin_router)
+app.include_router(commentaire_tech_router)
+
+# Router global additionnel
 app.include_router(api_router)
 
 

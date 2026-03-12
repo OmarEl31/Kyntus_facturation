@@ -2,10 +2,16 @@
 
 import { useState } from "react";
 import { X, Upload } from "lucide-react";
-import { uploadOrangePpd, uploadPraxedo, uploadPidi, uploadPraxedoCr10 } from "@/services/dossiersApi";
+import {
+  uploadOrangePpd,
+  uploadPraxedo,
+  uploadPidi,
+  uploadPraxedoCr10,
+  uploadCommentaireTech,
+} from "@/services/dossiersApi";
 
 type Props = {
-  type: "PRAXEDO" | "PIDI" | "ORANGE_PPD" | "PRAXEDO_CR10";
+  type: "PRAXEDO" | "PIDI" | "ORANGE_PPD" | "PRAXEDO_CR10" | "COMMENTAIRE_TECH" ;
   onImported: (payload?: { importId?: string }) => void;
   onClose: () => void;
 };
@@ -17,36 +23,40 @@ export default function FileUploadModal({ type, onImported, onClose }: Props) {
   const [result, setResult] = useState<{ message: string; count: number; import_id?: string } | null>(null);
 
   async function handleUpload() {
-    if (!file) {
-      setError("Veuillez sélectionner un fichier CSV.");
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    setResult(null);
-
-    try {
-      let res;
-      // ✅ CORRECT: Tous les cas sont gérés
-      if (type === "PRAXEDO") {
-        res = await uploadPraxedo(file);
-      } else if (type === "PIDI") {
-        res = await uploadPidi(file);
-      } else if (type === "PRAXEDO_CR10") {
-        res = await uploadPraxedoCr10(file);
-      } else {
-        res = await uploadOrangePpd(file);
-      }
-      
-      setResult(res);
-      onImported({ importId: res.import_id });
-    } catch (e: any) {
-      setError(e?.message || "Erreur lors de l'import du fichier.");
-    } finally {
-      setLoading(false);
-    }
+  if (!file) {
+    setError("Veuillez sélectionner un fichier CSV.");
+    return;
   }
+
+  setLoading(true);
+  setError(null);
+  setResult(null);
+
+  try {
+    let res;
+
+    if (type === "PRAXEDO") {
+      res = await uploadPraxedo(file);
+    } else if (type === "PIDI") {
+      res = await uploadPidi(file);
+    } else if (type === "PRAXEDO_CR10") {
+      res = await uploadPraxedoCr10(file);
+    } else if (type === "COMMENTAIRE_TECH") {
+      res = await uploadCommentaireTech(file);
+    } else if (type === "ORANGE_PPD") {
+      res = await uploadOrangePpd(file);
+    } else {
+      throw new Error(`Type d'import non supporté: ${type}`);
+    }
+
+    setResult(res);
+    onImported({ importId: res.import_id });
+  } catch (e: any) {
+    setError(e?.message || "Erreur lors de l'import du fichier.");
+  } finally {
+    setLoading(false);
+  }
+}
 
   return (
     <div className="fixed inset-0 z-50">
