@@ -1,9 +1,7 @@
-# Backend/routes/imports.py
 from __future__ import annotations
 
 import os
 import csv
-import uuid
 import re
 import json
 import math
@@ -16,15 +14,14 @@ from typing import Any
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+
 from database.connection import get_db
 from models.raw_praxedo import RawPraxedo
 from models.raw_pidi import RawPidi
 from models.raw_praxedo_cr10 import RawPraxedoCr10
 
-# --- NOUVEAU: Imports dyal l'Auth ---
 from routes.auth import get_current_user
 from models.user import User
-# ------------------------------------
 
 router = APIRouter(prefix="/api/import", tags=["imports"])
 DEBUG_IMPORTS = os.getenv("DEBUG_IMPORTS", "0") == "1"
@@ -35,10 +32,8 @@ CLOTURE_CODES = {
     "TVC", "ETU", "RMC", "RMF", "ORT", "MAJ", "TKO", "REA",
 }
 
-# -------------------------------------------------------------------
-# Extraction palier depuis événements
-# -------------------------------------------------------------------
 PALIER_NUM_RE = re.compile(r"\bpalier\s*([123])\b", re.IGNORECASE)
+
 
 def _extract_palier_from_evenements(evenements: str | None) -> str | None:
     if not evenements:
@@ -47,21 +42,17 @@ def _extract_palier_from_evenements(evenements: str | None) -> str | None:
     if not s:
         return None
 
-    # cherche "Palier 1/2/3"
     m = PALIER_NUM_RE.search(s)
     if m:
         return f"PALIER_{m.group(1)}"
 
-    # cas "Aucunes regles applicables" => Palier 1 (ton besoin)
     low = s.lower()
     if ("aucun" in low or "aucunes" in low) and ("regle" in low or "règle" in low) and ("applic" in low):
         return "PALIER_1"
 
     return None
 
-# -------------------------------------------------------------------
-# Normalisation d'en-têtes
-# -------------------------------------------------------------------
+
 def _norm(s: str) -> str:
     s = (s or "").replace("\ufeff", "").strip().lower()
     s = unicodedata.normalize("NFKD", s)
@@ -136,9 +127,6 @@ def _merge_articles(old: str | None, new: str | None) -> str | None:
 
 
 def _normalize_row(r: dict[str, Any]) -> dict[str, Any]:
-    """
-    Normalisation sans écraser une valeur non vide par une valeur vide (collision de keys).
-    """
     out: dict[str, Any] = {}
     for k, v in r.items():
         if k is None:
@@ -160,16 +148,10 @@ def _sa_only_known_columns(model_cls, payload: dict) -> dict:
     return {k: v for k, v in payload.items() if k in allowed}
 
 
-# -------------------------------------------------------------------
-# digits-only OT (robuste)
-# -------------------------------------------------------------------
 def _digits_only(v: str | None) -> str | None:
     if not v:
         return None
     s = str(v).strip()
-
-    # Cas valeurs type "21692880.0"
-    # On tente un float puis on cast int si c'est un entier
     try:
         f = float(s.replace(",", "."))
         if math.isfinite(f) and abs(f - int(f)) < 1e-9:
@@ -177,15 +159,11 @@ def _digits_only(v: str | None) -> str | None:
     except Exception:
         pass
 
-    # Garder uniquement les digits
     s = re.sub(r"\D+", "", s)
     s = s.lstrip("0")
     return s if s else None
 
 
-# -------------------------------------------------------------------
-# Détection séparateur (ROBUSTE)
-# -------------------------------------------------------------------
 def _detect_delimiter(file: UploadFile, requested: str) -> str:
     try:
         pos = file.file.tell()
@@ -243,9 +221,6 @@ def _resolve_delimiter(delimiter_q: str | None, delimiter_form: str | None) -> s
     return d if d in {",", ";", "\t", "|"} else ";"
 
 
-# -------------------------------------------------------------------
-# Vérification strict colonnes obligatoires
-# -------------------------------------------------------------------
 def _require_columns_strict(
     raw_headers: list[str],
     norm_headers: list[str],
@@ -274,9 +249,6 @@ def _require_columns_strict(
         )
 
 
-# -------------------------------------------------------------------
-# Signatures attendues (strict)
-# -------------------------------------------------------------------
 PRAXEDO_REQUIRED = {
     "N°": {"numero", "n", "no", "ot", "numero_ot", "ot_key"},
     "Statut": {"statut"},
@@ -321,9 +293,6 @@ PRAXEDO_CR10_REQUIRED = {
 }
 
 
-# -------------------------------------------------------------------
-# Helpers métier
-# -------------------------------------------------------------------
 def _find_value_by_header_like(raw_row: dict[str, Any], *contains_all: str) -> str | None:
     wants = [w.lower() for w in contains_all]
     for k, v in raw_row.items():
@@ -396,17 +365,10 @@ def _parse_ht(value: str | None) -> Decimal | None:
         return None
 
 
-# -------------------------------------------------------------------
-# extraction commentaireReleve depuis COMPTE-RENDU
-# -------------------------------------------------------------------
 COMMENT_RELEVE_RE = re.compile(r"#commentairereleve\s*=\s*(.+)", re.IGNORECASE)
 
 
 def _extract_commentaire_releve(compte_rendu: str | None) -> str | None:
-    """
-    Extrait le commentaire tech réel depuis COMPTE-RENDU:
-    cherche '#commentaireReleve=' puis renvoie le reste (trim).
-    """
     if not compte_rendu:
         return None
     s = _clean_text(compte_rendu) or ""
@@ -417,16 +379,13 @@ def _extract_commentaire_releve(compte_rendu: str | None) -> str | None:
     return val if val else None
 
 
-# -------------------------------------------------------------------
-# Routes
-# -------------------------------------------------------------------
 @router.post("/praxedo")
 async def import_praxedo(
     file: UploadFile = File(...),
     delimiter_q: str | None = Query(None),
     delimiter: str = Form(";"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)  # <-- NOUVEAU
+    current_user: User = Depends(get_current_user)
 ):
     try:
         d0 = _resolve_delimiter(delimiter_q, delimiter)
@@ -435,11 +394,11 @@ async def import_praxedo(
         raw_headers, norm_headers, reader = _read_header_and_reader(file, eff_delim)
         _require_columns_strict(raw_headers, norm_headers, PRAXEDO_REQUIRED, "PRAXEDO")
 
-        rows = 0
-        ds_non_null = 0
         now = datetime.utcnow()
+        ds_non_null = 0
+        by_key: dict[tuple[str, int], dict[str, Any]] = {}
 
-        for _, raw_row in enumerate(reader):
+        for raw_row in reader:
             if not raw_row:
                 continue
 
@@ -463,7 +422,6 @@ async def import_praxedo(
             if ds:
                 ds_non_null += 1
 
-            # capter COMPTE-RENDU + extraire commentaireReleve
             compte_rendu = _clean_text(
                 _val(h, "compte_rendu", "compterendu", "compte__rendu", "compte_rendu_", "compte_rendu_praxedo")
             )
@@ -482,6 +440,7 @@ async def import_praxedo(
 
             obj_payload = {
                 "numero": numero,
+                "user_id": current_user.id,
                 "statut": _val(h, "statut"),
                 "planifiee": _val(h, "planifiee", "planifiee_au", "date_planifiee"),
                 "nom_technicien": _val(h, "nom_technicien", "technicien"),
@@ -494,15 +453,10 @@ async def import_praxedo(
                 "ville_site": _val(h, "ville_site", "ville"),
                 "desc_site": ds,
                 "description": desc,
-
-                # si la colonne existe dans RawPraxedo tu peux aussi la garder en clair
                 "compte_rendu": compte_rendu,
-
                 "imported_at": now,
-                "user_id": current_user.id,  # <-- NOUVEAU
             }
 
-            # Stockage dans csv_extra (JSON texte) sans migration DB
             existing_extra = _val(h, "csv_extra")
             if existing_extra and str(existing_extra).strip():
                 try:
@@ -518,11 +472,39 @@ async def import_praxedo(
                 obj_payload["csv_extra"] = json.dumps(extra_payload, ensure_ascii=False)
 
             obj_payload = _sa_only_known_columns(RawPraxedo, obj_payload)
-            db.merge(RawPraxedo(**obj_payload))
-            rows += 1
+            by_key[(numero, current_user.id)] = obj_payload
 
+        rows_list = list(by_key.values())
+        if not rows_list:
+            return {"ok": True, "rows": 0, "desc_site_non_null": 0, "delimiter_used": eff_delim}
+
+        t = RawPraxedo.__table__
+        stmt = pg_insert(t).values(rows_list)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[t.c.numero, t.c.user_id],
+            set_={
+                "statut": stmt.excluded.statut,
+                "planifiee": stmt.excluded.planifiee,
+                "nom_technicien": stmt.excluded.nom_technicien,
+                "prenom_technicien": stmt.excluded.prenom_technicien,
+                "equipiers": stmt.excluded.equipiers,
+                "nd": stmt.excluded.nd,
+                "act_prod": stmt.excluded.act_prod,
+                "code_intervenant": stmt.excluded.code_intervenant,
+                "cp": stmt.excluded.cp,
+                "ville_site": stmt.excluded.ville_site,
+                "desc_site": stmt.excluded.desc_site,
+                "description": stmt.excluded.description,
+                "compte_rendu": stmt.excluded.compte_rendu,
+                "csv_extra": stmt.excluded.csv_extra,
+                "imported_at": stmt.excluded.imported_at,
+            },
+        )
+
+        db.execute(stmt)
         db.commit()
-        return {"ok": True, "rows": rows, "desc_site_non_null": ds_non_null, "delimiter_used": eff_delim}
+
+        return {"ok": True, "rows": len(rows_list), "desc_site_non_null": ds_non_null, "delimiter_used": eff_delim}
 
     except HTTPException:
         db.rollback()
@@ -538,7 +520,7 @@ async def import_pidi(
     delimiter_q: str | None = Query(None),
     delimiter: str = Form(";"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)  # <-- NOUVEAU
+    current_user: User = Depends(get_current_user)
 ):
     try:
         d0 = _resolve_delimiter(delimiter_q, delimiter)
@@ -582,7 +564,7 @@ async def import_pidi(
                     "comment_acqui_rejet": None,
                     "cause_acqui_rejet": None,
                     "imported_at": now,
-                    "user_id": current_user.id,  # <-- NOUVEAU
+                    "user_id": current_user.id,
                 }
                 agg[dossier_key] = rec
 
@@ -628,10 +610,11 @@ async def import_pidi(
                 _clean_text(_val(h, "cause_acqui_rejet", "cause_acqui_rejet_pidi"))
             )
 
-        upserted = 0
-        for _, rec in agg.items():
+        rows_list: list[dict[str, Any]] = []
+        for rec in agg.values():
             payload = {
                 "numero_flux_pidi": rec.get("numero_flux_pidi"),
+                "user_id": current_user.id,
                 "contrat": rec.get("contrat"),
                 "type_pidi": rec.get("type_pidi"),
                 "statut": rec.get("statut"),
@@ -651,17 +634,44 @@ async def import_pidi(
                 "comment_acqui_rejet": rec.get("comment_acqui_rejet"),
                 "cause_acqui_rejet": rec.get("cause_acqui_rejet"),
                 "imported_at": now,
-                "user_id": current_user.id,  # <-- NOUVEAU
             }
-
             payload = _sa_only_known_columns(RawPidi, payload)
+            rows_list.append(payload)
 
-            db.query(RawPidi).filter(RawPidi.numero_flux_pidi == payload["numero_flux_pidi"]).delete(synchronize_session=False)
-            db.add(RawPidi(**payload))
-            upserted += 1
+        if not rows_list:
+            return {"ok": True, "rows_in": rows_in, "rows_upserted": 0, "delimiter_used": eff_delim}
 
+        t = RawPidi.__table__
+        stmt = pg_insert(t).values(rows_list)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[t.c.numero_flux_pidi, t.c.user_id],
+            set_={
+                "contrat": stmt.excluded.contrat,
+                "type_pidi": stmt.excluded.type_pidi,
+                "statut": stmt.excluded.statut,
+                "nd": stmt.excluded.nd,
+                "code_secteur": stmt.excluded.code_secteur,
+                "numero_ot": stmt.excluded.numero_ot,
+                "numero_att": stmt.excluded.numero_att,
+                "oeie": stmt.excluded.oeie,
+                "code_gestion_chantier": stmt.excluded.code_gestion_chantier,
+                "agence": stmt.excluded.agence,
+                "liste_articles": stmt.excluded.liste_articles,
+                "numero_ppd": stmt.excluded.numero_ppd,
+                "attachement_valide": stmt.excluded.attachement_valide,
+                "bordereau": stmt.excluded.bordereau,
+                "ht": stmt.excluded.ht,
+                "n_cac": stmt.excluded.n_cac,
+                "comment_acqui_rejet": stmt.excluded.comment_acqui_rejet,
+                "cause_acqui_rejet": stmt.excluded.cause_acqui_rejet,
+                "imported_at": stmt.excluded.imported_at,
+            },
+        )
+
+        db.execute(stmt)
         db.commit()
-        return {"ok": True, "rows_in": rows_in, "rows_upserted": upserted, "delimiter_used": eff_delim}
+
+        return {"ok": True, "rows_in": rows_in, "rows_upserted": len(rows_list), "delimiter_used": eff_delim}
 
     except HTTPException:
         db.rollback()
@@ -677,7 +687,7 @@ async def import_praxedo_cr10(
     delimiter_q: str | None = Query(None),
     delimiter: str = Form(";"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)  # <-- NOUVEAU
+    current_user: User = Depends(get_current_user)
 ):
     try:
         d0 = _resolve_delimiter(delimiter_q, delimiter)
@@ -687,8 +697,6 @@ async def import_praxedo_cr10(
         _require_columns_strict(raw_headers, norm_headers, PRAXEDO_CR10_REQUIRED, "PRAXEDO_CR10")
 
         now = datetime.utcnow()
-
-        # (optionnel mais utile) dédoublonnage dans le fichier: "dernière ligne gagne"
         by_ot: dict[str, dict[str, Any]] = {}
 
         for raw_row in reader:
@@ -711,12 +719,12 @@ async def import_praxedo_cr10(
             cr = _clean_text(_val(h, "compte_rendu", "compterendu", "compte_rendu_")) \
                  or _clean_text(_find_value_by_header_like(raw_row, "compte", "rendu"))
 
-            # Extraction des événements et du palier
             evenements = _clean_text(_val(h, "evenements", "evenement", "events"))
             if not evenements:
                 evenements = _clean_text(_find_value_by_header_like(raw_row, "evenement"))
-            
-            palier = _extract_palier_from_evenements(evenements)
+
+            palier_csv = _clean_text(_val(h, "palier", "pallier", "niveau", "tier"))
+            palier = palier_csv or _extract_palier_from_evenements(evenements)
 
             by_ot[ot] = {
                 "id_externe": ot,
@@ -725,7 +733,7 @@ async def import_praxedo_cr10(
                 "evenements": evenements,
                 "palier": palier,
                 "imported_at": now,
-                "user_id": current_user.id,  # <-- NOUVEAU
+                "user_id": current_user.id,
             }
 
         rows_list = list(by_ot.values())
@@ -739,14 +747,13 @@ async def import_praxedo_cr10(
         stmt = pg_insert(t).values(rows_list)
 
         stmt = stmt.on_conflict_do_update(
-            index_elements=[t.c.id_externe],
+            index_elements=[t.c.id_externe, t.c.user_id],
             set_={
                 "nom_site": stmt.excluded.nom_site,
                 "compte_rendu": stmt.excluded.compte_rendu,
                 "evenements": stmt.excluded.evenements,
                 "palier": stmt.excluded.palier,
                 "imported_at": stmt.excluded.imported_at,
-                "user_id": stmt.excluded.user_id,  # <-- NOUVEAU
             },
         )
 

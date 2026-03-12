@@ -220,7 +220,7 @@ export default function DossiersList() {
   const [selected, setSelected] = useState<DossierFacturable | null>(null);
   const [showRawTerrain, setShowRawTerrain] = useState(false);
 
-  const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | "ORANGE_PPD" | "COMMENTAIRE_TECH" | null>(null);
+  const [importType, setImportType] = useState<"PRAXEDO" | "PIDI" | "ORANGE_PPD" | "COMMENTAIRE_TECH" | "PRAXEDO_CR10" | null>(null);
 
   const [showTruncateConfirm, setShowTruncateConfirm] = useState(false);
   const [isTruncating, setIsTruncating] = useState(false);
