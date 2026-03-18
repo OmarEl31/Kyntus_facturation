@@ -11,6 +11,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from io import TextIOWrapper
 from typing import Any
+from collections.abc import Iterator
 
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form, Query
 from sqlalchemy.orm import Session
@@ -379,6 +380,10 @@ def _extract_commentaire_releve(compte_rendu: str | None) -> str | None:
     val = (m.group(1) or "").strip()
     return val if val else None
 
+def _chunk_list(items: list[dict[str, Any]], size: int) -> Iterator[list[dict[str, Any]]]:
+    for i in range(0, len(items), size):
+        chunk = items[i:i + size]
+        yield chunk
 
 @router.post("/praxedo")
 async def import_praxedo(
@@ -573,17 +578,32 @@ async def import_pidi(
             rec["numero_flux_pidi"] = _pick_first(rec.get("numero_flux_pidi"), flux) or dossier_key
 
             rec["contrat"] = _pick_first(rec.get("contrat"), _clean_text(_val(h, "contrat")))
-            rec["type_pidi"] = _pick_first(rec.get("type_pidi"), _clean_text(_val(h, "type", "type_pidi", "type_attachement", "type_d_attachement")))
+            rec["type_pidi"] = _pick_first(
+                rec.get("type_pidi"),
+                _clean_text(_val(h, "type", "type_pidi", "type_attachement", "type_d_attachement"))
+            )
             rec["statut"] = _pick_first(rec.get("statut"), _clean_text(_val(h, "statut", "statut_attachement")))
 
-            rec["nd"] = _pick_first(rec.get("nd"), _clean_text(_val(h, "nd", "n_d", "ndi", "n_di", "numero_di", "numero_de_di")))
-            rec["numero_ot"] = _pick_first(rec.get("numero_ot"), _clean_text(_val(h, "numero_ot", "n_ot", "ot", "ot_key", "numero_de_l_ot", "numero_intervention")))
+            rec["nd"] = _pick_first(
+                rec.get("nd"),
+                _clean_text(_val(h, "nd", "n_d", "ndi", "n_di", "numero_di", "numero_de_di"))
+            )
+            rec["numero_ot"] = _pick_first(
+                rec.get("numero_ot"),
+                _clean_text(_val(h, "numero_ot", "n_ot", "ot", "ot_key", "numero_de_l_ot", "numero_intervention"))
+            )
 
             rec["code_secteur"] = _pick_first(rec.get("code_secteur"), _clean_text(_val(h, "code_secteur", "secteur")))
-            rec["numero_att"] = _pick_first(rec.get("numero_att"), _clean_text(_val(h, "numero_att", "n_att", "n_att_", "n_attachement", "numero_attachement")))
+            rec["numero_att"] = _pick_first(
+                rec.get("numero_att"),
+                _clean_text(_val(h, "numero_att", "n_att", "n_att_", "n_attachement", "numero_attachement"))
+            )
             rec["oeie"] = _pick_first(rec.get("oeie"), _clean_text(_val(h, "oeie")))
 
-            rec["code_gestion_chantier"] = _pick_first(rec.get("code_gestion_chantier"), _clean_text(_val(h, "code_gestion_chantier", "code_gestion", "codes_chantier_de_gestion")))
+            rec["code_gestion_chantier"] = _pick_first(
+                rec.get("code_gestion_chantier"),
+                _clean_text(_val(h, "code_gestion_chantier", "code_gestion", "codes_chantier_de_gestion"))
+            )
             rec["agence"] = _pick_first(rec.get("agence"), _clean_text(_val(h, "agence")))
 
             rec["liste_articles"] = _merge_articles(
@@ -591,8 +611,14 @@ async def import_pidi(
                 _val(h, "liste_des_articles", "liste_articles", "liste_d_articles", "article"),
             )
 
-            rec["numero_ppd"] = _pick_first(rec.get("numero_ppd"), _clean_text(_val(h, "n_ppd", "numero_ppd", "ppd", "n_pdd", "numero_pdd", "n__ppd")))
-            rec["attachement_valide"] = _pick_first(rec.get("attachement_valide"), _clean_text(_val(h, "attachement_valide", "attachement_validee", "attachement_valide_le", "attachement_valide_at")))
+            rec["numero_ppd"] = _pick_first(
+                rec.get("numero_ppd"),
+                _clean_text(_val(h, "n_ppd", "numero_ppd", "ppd", "n_pdd", "numero_pdd", "n__ppd"))
+            )
+            rec["attachement_valide"] = _pick_first(
+                rec.get("attachement_valide"),
+                _clean_text(_val(h, "attachement_valide", "attachement_validee", "attachement_valide_le", "attachement_valide_at"))
+            )
 
             rec["bordereau"] = _pick_first(rec.get("bordereau"), _clean_text(_val(h, "bordereau")))
             ht_new = _parse_ht(_val(h, "ht", "montant_ht", "prix_majore", "prix", "prix_majoré"))
@@ -611,10 +637,17 @@ async def import_pidi(
                 _clean_text(_val(h, "cause_acqui_rejet", "cause_acqui_rejet_pidi"))
             )
 
-        rows_list: list[dict[str, Any]] = []
+        # Déduplication finale par vraie clé SQL: (numero_flux_pidi, user_id)
+        rows_map: dict[tuple[str, int], dict[str, Any]] = {}
+        duplicate_flux_keys: list[str] = []
+
         for rec in agg.values():
+            flux_value = _clean_text(rec.get("numero_flux_pidi"))
+            if not flux_value:
+                continue
+
             payload = {
-                "numero_flux_pidi": rec.get("numero_flux_pidi"),
+                "numero_flux_pidi": flux_value,
                 "user_id": current_user.id,
                 "contrat": rec.get("contrat"),
                 "type_pidi": rec.get("type_pidi"),
@@ -637,49 +670,96 @@ async def import_pidi(
                 "imported_at": now,
             }
             payload = _sa_only_known_columns(RawPidi, payload)
-            rows_list.append(payload)
+
+            key = (payload["numero_flux_pidi"], payload["user_id"])
+            if key in rows_map:
+                duplicate_flux_keys.append(payload["numero_flux_pidi"])
+
+                existing = rows_map[key]
+                for field in [
+                    "contrat", "type_pidi", "statut", "nd", "code_secteur", "numero_ot",
+                    "numero_att", "oeie", "code_gestion_chantier", "agence", "numero_ppd",
+                    "attachement_valide", "bordereau", "n_cac",
+                    "comment_acqui_rejet", "cause_acqui_rejet"
+                ]:
+                    existing[field] = _pick_first(existing.get(field), payload.get(field))
+
+                existing["liste_articles"] = _merge_articles(
+                    existing.get("liste_articles"),
+                    payload.get("liste_articles")
+                )
+
+                if existing.get("ht") is None and payload.get("ht") is not None:
+                    existing["ht"] = payload.get("ht")
+
+                existing["imported_at"] = now
+            else:
+                rows_map[key] = payload
+
+        rows_list = list(rows_map.values())
 
         if not rows_list:
-            return {"ok": True, "rows_in": rows_in, "rows_upserted": 0, "delimiter_used": eff_delim}
+            return {
+                "ok": True,
+                "rows_in": rows_in,
+                "rows_upserted": 0,
+                "delimiter_used": eff_delim,
+                "duplicate_flux_merged": 0,
+            }
 
         t = RawPidi.__table__
-        stmt = pg_insert(t).values(rows_list)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=[t.c.numero_flux_pidi, t.c.user_id],
-            set_={
-                "contrat": stmt.excluded.contrat,
-                "type_pidi": stmt.excluded.type_pidi,
-                "statut": stmt.excluded.statut,
-                "nd": stmt.excluded.nd,
-                "code_secteur": stmt.excluded.code_secteur,
-                "numero_ot": stmt.excluded.numero_ot,
-                "numero_att": stmt.excluded.numero_att,
-                "oeie": stmt.excluded.oeie,
-                "code_gestion_chantier": stmt.excluded.code_gestion_chantier,
-                "agence": stmt.excluded.agence,
-                "liste_articles": stmt.excluded.liste_articles,
-                "numero_ppd": stmt.excluded.numero_ppd,
-                "attachement_valide": stmt.excluded.attachement_valide,
-                "bordereau": stmt.excluded.bordereau,
-                "ht": stmt.excluded.ht,
-                "n_cac": stmt.excluded.n_cac,
-                "comment_acqui_rejet": stmt.excluded.comment_acqui_rejet,
-                "cause_acqui_rejet": stmt.excluded.cause_acqui_rejet,
-                "imported_at": stmt.excluded.imported_at,
-            },
-        )
 
-        db.execute(stmt)
+        for chunk in _chunk_list(rows_list, 300):
+            stmt = pg_insert(t).values(chunk)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[t.c.numero_flux_pidi, t.c.user_id],
+                set_={
+                    "contrat": stmt.excluded.contrat,
+                    "type_pidi": stmt.excluded.type_pidi,
+                    "statut": stmt.excluded.statut,
+                    "nd": stmt.excluded.nd,
+                    "code_secteur": stmt.excluded.code_secteur,
+                    "numero_ot": stmt.excluded.numero_ot,
+                    "numero_att": stmt.excluded.numero_att,
+                    "oeie": stmt.excluded.oeie,
+                    "code_gestion_chantier": stmt.excluded.code_gestion_chantier,
+                    "agence": stmt.excluded.agence,
+                    "liste_articles": stmt.excluded.liste_articles,
+                    "numero_ppd": stmt.excluded.numero_ppd,
+                    "attachement_valide": stmt.excluded.attachement_valide,
+                    "bordereau": stmt.excluded.bordereau,
+                    "ht": stmt.excluded.ht,
+                    "n_cac": stmt.excluded.n_cac,
+                    "comment_acqui_rejet": stmt.excluded.comment_acqui_rejet,
+                    "cause_acqui_rejet": stmt.excluded.cause_acqui_rejet,
+                    "imported_at": stmt.excluded.imported_at,
+                },
+            )
+            db.execute(stmt)
+
         db.commit()
 
-        return {"ok": True, "rows_in": rows_in, "rows_upserted": len(rows_list), "delimiter_used": eff_delim}
+        return {
+            "ok": True,
+            "rows_in": rows_in,
+            "rows_upserted": len(rows_list),
+            "delimiter_used": eff_delim,
+            "duplicate_flux_merged": len(duplicate_flux_keys),
+            "duplicate_flux_samples": duplicate_flux_keys[:20],
+        }
 
     except HTTPException:
         db.rollback()
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_type": e.__class__.__name__,
+                "error": str(e),
+            }
+        )
 
 
 @router.post("/praxedo-cr10")

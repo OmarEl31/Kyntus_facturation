@@ -69,6 +69,7 @@ app.include_router(regles_router)
 app.include_router(debug_router)
 app.include_router(orange_ppd_router)
 app.include_router(praxedo_scraper_router)
+app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(commentaire_tech_router)
 
