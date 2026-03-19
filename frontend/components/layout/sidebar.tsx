@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useStore } from "@/lib/store"
-import { LayoutDashboard, FileText, Settings, BarChart3, Users, LogOut } from "lucide-react"
+import { FileText, Settings, Users, LogOut } from "lucide-react"
 
 interface SidebarProps {
   isOpen: boolean
@@ -14,10 +14,8 @@ export function Sidebar({ isOpen }: SidebarProps) {
   const { userRole } = useStore()
 
   const menuItems = [
-    { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { href: "/dossiers", label: "Dossiers", icon: FileText },
     { href: "/regles", label: "Règles", icon: Settings },
-    { href: "/audit", label: "Audit", icon: BarChart3 },
     ...(userRole === "admin" ? [{ href: "/admin", label: "Administration", icon: Users }] : []),
   ]
 
