@@ -1,3 +1,4 @@
+// frontend/components/admin/agencies-tab.tsx
 "use client"
 
 import { useState } from "react"

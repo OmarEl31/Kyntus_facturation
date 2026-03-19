@@ -1,14 +1,82 @@
 #Backend/routes/admin.py
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from database.connection import get_db
-from routes.auth import get_current_user
+from routes.auth import get_current_user, require_admin
 from models.user import User
+from schemas.user import AdminUserCreate, UserOut, UserRoleUpdate, UserStatusUpdate
+from core.security import get_password_hash
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+@router.get("/users", response_model=List[UserOut])
+def list_users(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    users = db.query(User).order_by(User.created_at.desc()).all()
+    return users
+
+
+@router.post("/users", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+def create_user_by_admin(
+    payload: AdminUserCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    existing_user = db.query(User).filter(User.email == payload.email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Cet email est déjà utilisé.")
+
+    new_user = User(
+        email=payload.email,
+        hashed_password=get_password_hash(payload.password),
+        role=payload.role,
+        is_active=payload.is_active,
+    )
+
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
+
+
+@router.put("/users/{user_id}/role", response_model=UserOut)
+def update_user_role(
+    user_id: int,
+    payload: UserRoleUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+    user.role = payload.role
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.put("/users/{user_id}/status", response_model=UserOut)
+def update_user_status(
+    user_id: int,
+    payload: UserStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+    user.is_active = payload.is_active
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 @router.post("/truncate-all")

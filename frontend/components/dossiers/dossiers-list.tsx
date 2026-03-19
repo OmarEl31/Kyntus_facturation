@@ -35,21 +35,21 @@ const DETAILS_BTN_CLASS =
 
 function badgeClass(kind: BadgeKind) {
   switch (kind) {
-    case "green":    return "bg-green-100 text-green-800";
-    case "yellow":   return "bg-amber-100 text-amber-900";
-    case "red":      return "bg-red-100 text-red-800";
-    case "purple":   return "bg-violet-100 text-violet-800";
-    case "blue":     return "bg-sky-100 text-sky-800";
-    case "orange":   return "bg-orange-100 text-orange-900";
-    case "indigo":   return "bg-indigo-100 text-indigo-800";
-    case "teal":     return "bg-teal-100 text-teal-900";
-    case "rose":     return "bg-rose-100 text-rose-800";
-    case "slate":    return "bg-slate-100 text-slate-800";
-    case "cyan":     return "bg-cyan-100 text-cyan-900";
-    case "fuchsia":  return "bg-fuchsia-100 text-fuchsia-900";
-    case "lime":     return "bg-lime-100 text-lime-900";
+    case "green": return "bg-green-100 text-green-800";
+    case "yellow": return "bg-amber-100 text-amber-900";
+    case "red": return "bg-red-100 text-red-800";
+    case "purple": return "bg-violet-100 text-violet-800";
+    case "blue": return "bg-sky-100 text-sky-800";
+    case "orange": return "bg-orange-100 text-orange-900";
+    case "indigo": return "bg-indigo-100 text-indigo-800";
+    case "teal": return "bg-teal-100 text-teal-900";
+    case "rose": return "bg-rose-100 text-rose-800";
+    case "slate": return "bg-slate-100 text-slate-800";
+    case "cyan": return "bg-cyan-100 text-cyan-900";
+    case "fuchsia": return "bg-fuchsia-100 text-fuchsia-900";
+    case "lime": return "bg-lime-100 text-lime-900";
     case "lightBlue": return "bg-blue-50 text-blue-800 border border-blue-200";
-    default:         return "bg-gray-100 text-gray-800";
+    default: return "bg-gray-100 text-gray-800";
   }
 }
 
@@ -81,28 +81,28 @@ function formatFrDate(v?: string | null) {
 }
 
 function croisementKind(s?: string | null): BadgeKind {
-  if (s === "OK")             return "green";
+  if (s === "OK") return "green";
   if (s === "ABSENT_PRAXEDO") return "yellow";
-  if (s === "ABSENT_PIDI")    return "red";
+  if (s === "ABSENT_PIDI") return "red";
   return "gray";
 }
 
 function statutFinalKind(s?: string | null): BadgeKind {
-  if (s === "FACTURABLE")     return "green";
+  if (s === "FACTURABLE") return "green";
   if (s === "NON_FACTURABLE") return "red";
-  if (s === "CONDITIONNEL")   return "yellow";
-  if (s === "A_VERIFIER")     return "orange";
+  if (s === "CONDITIONNEL") return "yellow";
+  if (s === "A_VERIFIER") return "orange";
   return "gray";
 }
 
 function motifKind(m?: string | null): BadgeKind {
   const x = (m ?? "").toUpperCase();
-  if (x === "CROISEMENT_INCOMPLET")  return "orange";
-  if (x === "REGLE_MANQUANTE")       return "orange";
-  if (x === "ACTPROD_MANQUANT")      return "orange";
-  if (x === "CLOTURE_INVALIDE")      return "orange";
-  if (x === "PREVISITE")             return "slate";
-  if (x === "NON_FACTURABLE_REGLE")  return "slate";
+  if (x === "CROISEMENT_INCOMPLET") return "orange";
+  if (x === "REGLE_MANQUANTE") return "orange";
+  if (x === "ACTPROD_MANQUANT") return "orange";
+  if (x === "CLOTURE_INVALIDE") return "orange";
+  if (x === "PREVISITE") return "slate";
+  if (x === "NON_FACTURABLE_REGLE") return "slate";
   return "gray";
 }
 
@@ -110,12 +110,12 @@ function motifLabel(m?: string | null): string {
   const x = (m ?? "").toUpperCase();
   if (!x) return "—";
   switch (x) {
-    case "CROISEMENT_INCOMPLET":  return "Croisement incomplet";
-    case "REGLE_MANQUANTE":       return "Règle manquante";
-    case "ACTPROD_MANQUANT":      return "Act/Prod manquant";
-    case "CLOTURE_INVALIDE":      return "Clôture invalide";
-    case "PREVISITE":             return "Prévisite";
-    case "NON_FACTURABLE_REGLE":  return "Non facturable (règle)";
+    case "CROISEMENT_INCOMPLET": return "Croisement incomplet";
+    case "REGLE_MANQUANTE": return "Règle manquante";
+    case "ACTPROD_MANQUANT": return "Act/Prod manquant";
+    case "CLOTURE_INVALIDE": return "Clôture invalide";
+    case "PREVISITE": return "Prévisite";
+    case "NON_FACTURABLE_REGLE": return "Non facturable (règle)";
     default: return x.replaceAll("_", " ");
   }
 }
@@ -134,9 +134,9 @@ function pidiLabel(d: DossierFacturable) {
 
 function terrainKind(mode?: string | null): BadgeKind {
   const m = (mode ?? "").toUpperCase();
-  if (m.includes("IMM"))  return "indigo";
+  if (m.includes("IMM")) return "indigo";
   if (m.includes("SOUT")) return "cyan";
-  if (m.includes("AER"))  return "fuchsia";
+  if (m.includes("AER")) return "fuchsia";
   return "slate";
 }
 
@@ -179,8 +179,6 @@ function groupByPpd(items: DossierFacturable[]) {
   }
   return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 }
-
-
 
 function Pagination({ page, pageCount, onPrev, onNext, onGo }: {
   page: number; pageCount: number;
@@ -227,7 +225,7 @@ export default function DossiersList() {
 
   // Vrai dès que le token est disponible dans localStorage
   const [authReady, setAuthReady] = useState(false);
-  
+
   // --- NOUVEAU: État pour savoir si l'utilisateur peut voir la section Orange ---
   const [canAccessOrange, setCanAccessOrange] = useState(false);
   // -----------------------------------------------------------------------------
@@ -411,7 +409,7 @@ export default function DossiersList() {
             <input type="checkbox" checked={showDossiersSection} onChange={(e) => setShowDossiersSection(e.target.checked)} />
             Afficher Dossiers
           </label>
-          
+
           {/* --- NOUVEAU: La checkbox Orange n'apparaît que si l'utilisateur est admin --- */}
           {canAccessOrange && (
             <label className="inline-flex items-center gap-2 text-sm border rounded px-3 py-2 bg-white cursor-pointer hover:bg-gray-50">
@@ -424,7 +422,18 @@ export default function DossiersList() {
             </label>
           )}
           {/* -------------------------------------------------------------------------- */}
-          
+
+          {/* --- NOUVEAU: Bouton Administration (visible seulement pour admin) --- */}
+          {canAccessOrange && (
+            <button
+              onClick={() => router.push("/admin")}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded bg-slate-800 text-white hover:bg-slate-900"
+            >
+              Administration
+            </button>
+          )}
+          {/* ------------------------------------------------------------------ */}
+
           <button onClick={() => load(filters)} disabled={loading} className="inline-flex items-center gap-2 px-3 py-2 rounded border bg-white hover:bg-gray-50 disabled:opacity-60">
             <RefreshCw className="h-4 w-4" /> Rafraîchir
           </button>
@@ -498,7 +507,7 @@ export default function DossiersList() {
       {/* ════════════════════════════════════════════
           ORANGE SECTION (composant séparé)
       ════════════════════════════════════════════ */}
-      
+
       {/* --- NOUVEAU: La section Orange n'apparaît que si l'utilisateur est admin --- */}
       {canAccessOrange && (
         <OrangeComparisonSection
@@ -754,10 +763,10 @@ export default function DossiersList() {
                 {showRawTerrain && (
                   <div className="space-y-2">
                     {[
-                      { label: "desc_site",    val: selected?.desc_site },
-                      { label: "description",  val: selected?.description },
+                      { label: "desc_site", val: selected?.desc_site },
+                      { label: "description", val: selected?.description },
                       { label: "compte_rendu", val: selected?.compte_rendu },
-                      { label: "evenements",   val: selected?.evenements },
+                      { label: "evenements", val: selected?.evenements },
                     ].map(({ label, val }) => (
                       <div key={label} className="rounded border bg-gray-50 p-3">
                         <div className="text-xs text-gray-500 mb-1">{label} (source)</div>
