@@ -44,9 +44,9 @@ export default function Sidebar() {
   const userName = userEmail ? userEmail.split('@')[0] : 'Utilisateur';
 
   const menuItems: MenuItem[] = [
-    { icon: FileText,      label: 'Dossiers',             href: '/dossiers' },
-    { icon: Settings,      label: 'Règles de facturation', href: '/regles'   },
-    { icon: DownloadCloud, label: 'Scraper Praxedo',       href: '/scraper'  },
+    { icon: FileText, label: 'Dossiers', href: '/dossiers' },
+    { icon: Settings, label: 'Règles de facturation', href: '/regles' },
+    { icon: DownloadCloud, label: 'Scraper Praxedo', href: '/scraper' },
   ];
 
   const handleNavigation = (href: string) => router.push(href);
@@ -60,9 +60,8 @@ export default function Sidebar() {
 
   return (
     <aside
-      className={`bg-white border-r border-gray-200 transition-all duration-300 ease-in-out flex flex-col relative shadow-lg h-screen flex-shrink-0 z-40 ${
-        open ? 'w-72' : 'w-20'
-      }`}
+      className={`bg-white border-r border-gray-200 transition-all duration-300 ease-in-out flex flex-col relative shadow-lg h-screen flex-shrink-0 z-40 ${open ? 'w-72' : 'w-20'
+        }`}
       onMouseEnter={() => !isPinned && setIsExpanded(true)}
       onMouseLeave={() => !isPinned && setIsExpanded(false)}
     >
@@ -73,22 +72,20 @@ export default function Sidebar() {
           <div className="flex items-center gap-3 min-w-0">
             {/* Icône compacte — sidebar fermée */}
             <div
-              className={`rounded-lg bg-gradient-to-br from-[#1e3a5f] to-[#2d5a8c] flex items-center justify-center flex-shrink-0 shadow-md transition-all duration-300 ${
-                open ? 'opacity-0 w-0 h-0 overflow-hidden' : 'opacity-100 w-10 h-10'
-              }`}
+              className={`rounded-lg bg-gradient-to-br from-[#1e3a5f] to-[#2d5a8c] flex items-center justify-center flex-shrink-0 shadow-md transition-all duration-300 ${open ? 'opacity-0 w-0 h-0 overflow-hidden' : 'opacity-100 w-10 h-10'
+                }`}
             >
               <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <path d="M12 2L2 7L12 12L22 7L12 2Z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M2 17L12 22L22 17"          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M2 12L12 17L22 12"          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M2 17L12 22L22 17" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M2 12L12 17L22 12" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </div>
 
             {/* Logo image — sidebar ouverte */}
             <div
-              className={`flex flex-col transition-all duration-300 overflow-hidden ${
-                open ? 'opacity-100 w-auto' : 'opacity-0 w-0'
-              }`}
+              className={`flex flex-col transition-all duration-300 overflow-hidden ${open ? 'opacity-100 w-auto' : 'opacity-0 w-0'
+                }`}
             >
               <Image
                 src={kyntusLogo}
@@ -116,9 +113,8 @@ export default function Sidebar() {
           {open && (
             <button
               onClick={() => setIsPinned(!isPinned)}
-              className={`p-1.5 rounded-lg transition-all duration-200 hover:bg-gray-100 flex-shrink-0 ${
-                isPinned ? 'text-[#ff8c42]' : 'text-gray-400'
-              }`}
+              className={`p-1.5 rounded-lg transition-all duration-200 hover:bg-gray-100 flex-shrink-0 ${isPinned ? 'text-[#ff8c42]' : 'text-gray-400'
+                }`}
               type="button"
             >
               <Menu className="w-5 h-5" />
@@ -143,11 +139,10 @@ export default function Sidebar() {
             <button
               key={index}
               onClick={() => handleNavigation(item.href)}
-              className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-all duration-200 group relative ${
-                isActive
-                  ? 'bg-gradient-to-r from-[#1e3a5f] to-[#2d5a8c] text-white shadow-md'
-                  : 'text-gray-700 hover:bg-gray-100'
-              }`}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg transition-all duration-200 group relative ${isActive
+                ? 'bg-gradient-to-r from-[#1e3a5f] to-[#2d5a8c] text-white shadow-md'
+                : 'text-gray-700 hover:bg-gray-100'
+                }`}
               title={!open ? item.label : undefined}
               type="button"
             >
@@ -174,9 +169,8 @@ export default function Sidebar() {
 
         <button
           onClick={handleLogout}
-          className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg text-red-600 hover:bg-red-50 hover:text-red-700 transition-all duration-200 ${
-            open ? 'justify-start' : 'justify-center'
-          }`}
+          className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg text-red-600 hover:bg-red-50 hover:text-red-700 transition-all duration-200 ${open ? 'justify-start' : 'justify-center'
+            }`}
           title={!open ? 'Déconnexion' : undefined}
           type="button"
         >
