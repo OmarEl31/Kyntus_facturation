@@ -1,16 +1,21 @@
-"use client"
+"use client";
 
-import type React from "react"
+import type { ReactNode } from "react";
+import Sidebar from "./sidebar";
 
-import { Sidebar } from "./sidebar"
+type MainLayoutProps = {
+  children: ReactNode;
+};
 
-export function MainLayout({ children }: { children: React.ReactNode }) {
+export function MainLayout({ children }: MainLayoutProps) {
   return (
-    <div className="flex h-screen bg-background">
+    <div style={{ display: "flex", minHeight: "100vh", width: "100%" }}>
       <Sidebar />
-      <main className="flex-1 overflow-auto">
-        <div className="p-8">{children}</div>
+      <main style={{ flex: 1, minWidth: 0 }}>
+        {children}
       </main>
     </div>
-  )
+  );
 }
+
+export default MainLayout;

@@ -1,20 +1,27 @@
-import "./globals.css";
-import type { Metadata } from "next";
-import type { ReactNode } from "react";
+"use client";
 
-export const metadata: Metadata = {
-  title: "Kyntus Facturation",
-  description: "Application de facturation",
-};
+import "./globals.css";
+import type { ReactNode } from "react";
+import { usePathname } from "next/navigation";
+import { MainLayout } from "../components/main-layout";
 
 type RootLayoutProps = {
   children: ReactNode;
 };
 
 export default function RootLayout({ children }: RootLayoutProps) {
+  const pathname = usePathname();
+
+  const noLayoutRoutes = ["/auth", "/login"];
+  const shouldHideLayout = noLayoutRoutes.some(
+    (route) => pathname === route || pathname.startsWith(route + "/")
+  );
+
   return (
     <html lang="fr">
-      <body>{children}</body>
+      <body>
+        {shouldHideLayout ? children : <MainLayout>{children}</MainLayout>}
+      </body>
     </html>
   );
 }

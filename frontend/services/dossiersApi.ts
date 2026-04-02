@@ -15,6 +15,26 @@ function getAuthHeaders(): HeadersInit {
   return {};
 }
 
+// Helper commun pour gérer les réponses API
+async function handleApiResponse(response: Response): Promise<Response> {
+  if (response.status === 401) {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("token");
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("refresh_token");
+      window.location.href = "/auth";
+    }
+    throw new Error("Non authentifié");
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Erreur ${response.status}: ${errorText}`);
+  }
+
+  return response;
+}
+
 /* =========================
    HELPER: Normalisation NDS
 ========================= */
@@ -25,15 +45,13 @@ function getAuthHeaders(): HeadersInit {
 export function ndsToText(nds: string[] | string | null | undefined): string {
   if (!nds) return "";
 
-  // Cas 1: déjà un array
   if (Array.isArray(nds)) {
     return nds.filter(Boolean).join(" | ");
   }
 
-  // Cas 2: string PostgreSQL "{a,b,c}"
   const s = String(nds).trim();
   if (!s) return "";
-  
+
   if (s.startsWith("{") && s.endsWith("}")) {
     return s
       .slice(1, -1)
@@ -43,7 +61,6 @@ export function ndsToText(nds: string[] | string | null | undefined): string {
       .join(" | ");
   }
 
-  // Cas 3: string normale
   return s;
 }
 
@@ -51,18 +68,15 @@ export function ndsToText(nds: string[] | string | null | undefined): string {
  * Helper pour obtenir la valeur à afficher dans la colonne "Relevé / ND"
  */
 export function getReleveOrNdValue(row: any): string {
-  // Si releve existe et n'est pas vide, l'utiliser
   if (row.releve && typeof row.releve === 'string' && row.releve.trim()) {
     return row.releve.trim();
   }
-  
-  // Sinon, utiliser nds normalisé
+
   const ndText = ndsToText(row.nds);
   if (ndText) {
     return ndText;
   }
-  
-  // Fallback
+
   return "—";
 }
 
@@ -131,16 +145,12 @@ export interface DossierFacturable {
   regle_articles_attendus?: any;
   statut_article?: string | null;
   statut_article_vs_regle?: string | null;
-  
-  // Champs existants
+
   palier: string | null;
-  
-  // Nouveaux champs
   palier_phrase?: string | null;
   evenements?: string | null;
   compte_rendu?: string | null;
-  
-  // Champs Orange PPD (Excel)
+
   releve?: string | null;
   nds?: string[] | string | null;
 }
@@ -179,10 +189,6 @@ function buildParams(filters: DossiersFilters) {
   return params;
 }
 
-/**
- * ✅ Correctif 2C — accepte un AbortSignal optionnel pour permettre l'annulation
- * depuis le composant (AbortController dans load()).
- */
 export async function listDossiers(
   filters: DossiersFilters = {},
   signal?: AbortSignal,
@@ -203,32 +209,25 @@ export async function listDossiers(
   const response = await fetch(url, {
     method: "GET",
     cache: "no-store",
-    signal,                      // ← transmis au fetch natif
+    signal,
     headers: {
       ...getAuthHeaders(),
     },
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Erreur ${response.status}: ${errorText}`);
-  }
-
+  await handleApiResponse(response);
   return response.json();
 }
 
-/**
- * Extrait le nom de fichier depuis l'en-tête Content-Disposition
- */
 function extractFilenameFromContentDisposition(contentDisposition: string | null): string | null {
   if (!contentDisposition) return null;
-  
+
   const patterns = [
     /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/,
     /filename="([^"]+)"/,
     /filename=([^;]+)/,
   ];
-  
+
   for (const pattern of patterns) {
     const match = contentDisposition.match(pattern);
     if (match) {
@@ -237,7 +236,7 @@ function extractFilenameFromContentDisposition(contentDisposition: string | null
       if (filename) return filename;
     }
   }
-  
+
   return null;
 }
 
@@ -253,20 +252,16 @@ export async function exportDossiersXlsx(filters: DossiersFilters = {}): Promise
 
   const response = await fetch(url, {
     method: "GET",
-    headers: { 
+    headers: {
       Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       ...getAuthHeaders(),
     },
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error("❌ Export Excel failed:", response.status, errorText);
-    throw new Error(`Erreur ${response.status}: ${errorText}`);
-  }
+  await handleApiResponse(response);
 
   const blob = await response.blob();
-  
+
   if (blob.size === 0) {
     throw new Error("Le fichier Excel est vide");
   }
@@ -277,7 +272,7 @@ export async function exportDossiersXlsx(filters: DossiersFilters = {}): Promise
 
   const contentDisposition = response.headers.get("Content-Disposition");
   let filename = extractFilenameFromContentDisposition(contentDisposition);
-  
+
   if (!filename || !filename.endsWith('.xlsx')) {
     const date = new Date().toISOString().split('T')[0];
     filename = `dossiers_export_${date}.xlsx`;
@@ -289,7 +284,7 @@ export async function exportDossiersXlsx(filters: DossiersFilters = {}): Promise
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  
+
   setTimeout(() => {
     window.URL.revokeObjectURL(downloadUrl);
   }, 100);
@@ -322,7 +317,7 @@ export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvRes
   formData.append("delimiter", delimiter);
 
   let endpoint: string;
-  
+
   switch (type) {
     case "PRAXEDO":
       endpoint = `${API_URL}/api/import/praxedo`;
@@ -346,27 +341,16 @@ export async function importCsv(options: ImportCsvOptions): Promise<ImportCsvRes
   console.log(`📄 Fichier: ${file.name}, Taille: ${file.size} bytes, Délimiteur: ${delimiter}`);
 
   try {
-    const response = await fetch(endpoint, { 
-      method: "POST", 
-      body: formData, 
+    const response = await fetch(endpoint, {
+      method: "POST",
+      body: formData,
       signal,
       headers: {
         ...getAuthHeaders(),
       },
     });
 
-    if (!response.ok) {
-      let errorDetail = "";
-      try {
-        const errorJson = await response.json();
-        errorDetail = JSON.stringify(errorJson, null, 2);
-      } catch {
-        errorDetail = await response.text();
-      }
-      
-      console.error(`❌ Erreur ${response.status}:`, errorDetail);
-      throw new Error(`Erreur ${response.status}: ${errorDetail}`);
-    }
+    await handleApiResponse(response);
 
     const result = await response.json();
     console.log(`✅ Import réussi:`, result);
@@ -393,11 +377,7 @@ export interface OrangePpdImportSummary {
   row_count?: number | null;
   imported_by?: string | null;
   imported_at?: string | null;
-
-  // Excel-only
   sheet_name?: string | null;
-
-  // pour l'UI
   kind?: "CSV" | "XLSX";
 }
 
@@ -413,33 +393,21 @@ export type OrangePpdCompareSummary = {
 export type OrangePpdComparison = {
   import_id: string;
   num_ot: string;
-
   numero_ppd_orange?: string | null;
-
   facturation_orange_ht?: number | null;
   facturation_orange_ttc?: number | null;
   facturation_kyntus_ht?: number | null;
   facturation_kyntus_ttc?: number | null;
-
   diff_ht?: number | null;
   diff_ttc?: number | null;
-
   a_verifier?: boolean | null;
   ot_existant?: boolean | null;
   statut_croisement?: string | null;
   croisement_complet?: boolean | null;
   reason?: string | null;
-
-  // Champs XLSX (relevé par relevé)
   releve?: string | null;
-
-  // nds peut venir comme array Postgres (text[]) ou string
   nds?: string[] | string | null;
-
-  // Certains endpoints remontent aussi numero_ots (text[])
   numero_ots?: string[] | string | null;
-
-  // OT réel PIDI si ajouté au back
   ot_pidi?: string | null;
 };
 
@@ -490,16 +458,10 @@ export async function compareOrangePpdTree(
     headers: getAuthHeaders(),
   });
 
-  if (!response.ok) {
-    throw new Error(`Erreur ${response.status}: ${await response.text()}`);
-  }
-
+  await handleApiResponse(response);
   return response.json();
 }
 
-/**
- * Upload XLSX Orange PPD (PPDATEL multi-feuille)
- */
 export async function uploadOrangePpdExcel(file: File): Promise<ImportCsvResult> {
   const formData = new FormData();
   formData.append("file", file);
@@ -512,47 +474,31 @@ export async function uploadOrangePpdExcel(file: File): Promise<ImportCsvResult>
     },
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Erreur ${response.status}: ${errorText}`);
-  }
-
+  await handleApiResponse(response);
   return response.json();
 }
 
-/**
- * Liste fusionnée CSV + XLSX (un seul appel API, déjà triée et limitée)
- */
 export async function listOrangeImports(limit = 30): Promise<OrangePpdImportSummary[]> {
   const res = await fetch(`${API_URL}/api/orange-ppd/imports?limit=${limit}`, {
     cache: "no-store",
     headers: getAuthHeaders(),
   });
-  
-  if (!res.ok) {
-    throw new Error(await res.text());
-  }
-  
+
+  await handleApiResponse(res);
   return res.json();
 }
 
-/**
- * ⚠️ Gardée pour compatibilité avec d'anciennes pages — NE PLUS UTILISER
- * dans la page de comparaison.
- */
 export async function listOrangeExcelImports(limit = 30): Promise<OrangePpdImportSummary[]> {
   const res = await fetch(`${API_URL}/api/orange-ppd/excel-imports?limit=${limit}`, {
     cache: "no-store",
     headers: getAuthHeaders(),
   });
-  if (!res.ok) throw new Error(await res.text());
+
+  await handleApiResponse(res);
   const data = await res.json();
   return data.map((x: any) => ({ ...x, kind: "XLSX" as const }));
 }
 
-/**
- * Helper de dédoublonnage par import_id (anti-doublon)
- */
 export function dedupeByImportId(items: any[]) {
   const m = new Map<string, any>();
   for (const it of items || []) {
@@ -570,7 +516,8 @@ export async function listOrangePpdOptions(importId?: string): Promise<string[]>
     cache: "no-store",
     headers: getAuthHeaders(),
   });
-  if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
+
+  await handleApiResponse(response);
   return response.json();
 }
 
@@ -586,7 +533,8 @@ export async function compareOrangePpd(
     cache: "no-store",
     headers: getAuthHeaders(),
   });
-  if (!response.ok) throw new Error(`Erreur ${response.status}: ${await response.text()}`);
+
+  await handleApiResponse(response);
   return response.json();
 }
 
@@ -601,6 +549,7 @@ export async function compareOrangePpdSummary(
     cache: "no-store",
     headers: getAuthHeaders(),
   });
-  if (!res.ok) throw new Error(`Erreur ${res.status}: ${await res.text()}`);
+
+  await handleApiResponse(res);
   return res.json();
 }
